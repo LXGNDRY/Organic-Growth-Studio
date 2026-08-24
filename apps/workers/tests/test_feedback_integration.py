@@ -38,6 +38,10 @@ class StubDiscovery(TargetDiscoveryService):
         return self._candidates[:max_candidates]
 
 
+async def no_delay(seconds: float) -> None:
+    """Test double for EngagementEngine's inter-action delay — instant."""
+
+
 def make_pacing():
     from unittest.mock import AsyncMock
 
@@ -61,7 +65,7 @@ async def test_engine_actions_are_persisted_to_postgres(db):
 
     async with db.session() as session:
         sink = make_feedback_sink(session, "acct-db")
-        engine = EngagementEngine("acct-db", pacing, executor, discovery=StubDiscovery(candidates), on_result=sink)
+        engine = EngagementEngine("acct-db", pacing, executor, discovery=StubDiscovery(candidates), on_result=sink, delay_fn=no_delay)
         cycle = await engine.run_cycle(targeting_config={"min_followers": 0, "max_followers": 100000})
         await session.commit()
 
@@ -98,7 +102,7 @@ async def test_failed_actions_also_write_an_audit_entry(db):
 
     async with db.session() as session:
         sink = make_feedback_sink(session, "acct-db2")
-        engine = EngagementEngine("acct-db2", pacing, executor, discovery=StubDiscovery(candidates), on_result=sink)
+        engine = EngagementEngine("acct-db2", pacing, executor, discovery=StubDiscovery(candidates), on_result=sink, delay_fn=no_delay)
         cycle = await engine.run_cycle(targeting_config={"min_followers": 0, "max_followers": 100000})
         await session.commit()
 

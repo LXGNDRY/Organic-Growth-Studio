@@ -94,10 +94,21 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Instagro engagement engine for one account.")
     parser.add_argument("account_id")
-    parser.add_argument("--live", action="store_true", help="execute against real Instagram (requires a real client wired in)")
+    parser.add_argument("--live", action="store_true", help="execute against real Instagram (not yet wired — see below)")
     parser.add_argument("--cycles", type=int, default=5)
     parser.add_argument("--sleep", type=float, default=1.0, help="seconds to sleep between cycles")
     args = parser.parse_args()
+    if args.live:
+        # There is no real InstagramClient wired into this CLI yet, so
+        # `--live` can never start a cycle today — `ActionExecutor` requires
+        # a real client. Fail fast, before spinning up Redis/Postgres, with
+        # an explanation instead of letting the ValueError surface deep in
+        # `run()`.
+        parser.error(
+            "--live is not usable yet: this CLI has no real InstagramClient "
+            "implementation to pass to ActionExecutor. Wire one in run() "
+            "before using --live."
+        )
     asyncio.run(run(args.account_id, cycles=args.cycles, sleep_seconds=args.sleep, live=args.live))
 
 
