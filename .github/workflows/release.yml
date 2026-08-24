@@ -1,0 +1,14 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  build-and-push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: { service: [api, workers] }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push
+        run: echo "Build ${{ matrix.service }} image and push to registry"
