@@ -1,5 +1,7 @@
+import random
 from dataclasses import dataclass
 from enum import Enum
+
 
 class TargetSource(str, Enum):
     COMPETITOR_FOLLOWERS = "competitor_followers"
@@ -18,6 +20,9 @@ class DiscoveredAccount:
     following_count: int | None = None
     post_count: int | None = None
     is_private: bool | None = None
+    bio: str | None = None
+    account_age_days: int | None = None
+    has_profile_pic: bool | None = None
 
 class TargetDiscoveryService:
     """Orchestrates target discovery from multiple sources.
@@ -25,10 +30,42 @@ class TargetDiscoveryService:
     Skeleton — production fetches from Instagram API/scrapers and feeds
     through the scoring service before inserting into target_accounts.
     """
-    def __init__(self): self.sources: dict = {}
+    def __init__(self, simulated: bool = False, seed: random.Random | None = None):
+        self.sources: dict = {}
+        self.simulated = simulated
+        self._rng = seed or random.Random()
 
     async def discover(self, account_id: str, targeting_config: dict, max_candidates: int = 1000) -> list[DiscoveredAccount]:
-        return []
+        if not self.simulated:
+            # Real production sourcing is not implemented yet — this stub is
+            # intentionally inert so callers don't silently get fake data
+            # when they meant to hit the real Instagram API/scrapers.
+            return []
+        return self._simulate_candidates(targeting_config, max_candidates)
+
+    def _simulate_candidates(self, cfg: dict, max_candidates: int) -> list[DiscoveredAccount]:
+        min_f = cfg.get("min_followers", 100)
+        max_f = cfg.get("max_followers", 50000)
+        n = min(max_candidates, 20)
+        out = []
+        for i in range(n):
+            followers = self._rng.randint(max(min_f, 1), max(max_f, min_f + 1))
+            following = self._rng.randint(50, 3000)
+            out.append(
+                DiscoveredAccount(
+                    username=f"sim_user_{i}",
+                    instagram_id=f"sim_{i}",
+                    source=TargetSource.AI_SUGGESTED,
+                    source_ref="simulated",
+                    follower_count=followers,
+                    following_count=following,
+                    post_count=self._rng.randint(0, 400),
+                    is_private=self._rng.random() < 0.15,
+                    account_age_days=self._rng.randint(10, 1500),
+                    has_profile_pic=self._rng.random() > 0.05,
+                )
+            )
+        return out
 
     async def filter_by_criteria(self, candidates: list[DiscoveredAccount], cfg: dict) -> list[DiscoveredAccount]:
         out = []

@@ -1,5 +1,6 @@
 from src.scoring import AccountProfile, calculate_quality_score, estimate_follow_probability
 
+
 class TestQualityScore:
     def test_in_range(self):
         p = AccountProfile(username="t", follower_count=1000, following_count=500, post_count=50)

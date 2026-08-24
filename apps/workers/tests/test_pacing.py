@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock
-import pytest
+
 from src.pacing import PacingConfig, PacingController, TokenBucket
+
 
 class TestPacingConfig:
     def test_initial_budget(self):

@@ -7,9 +7,12 @@ Principles:
 4. New accounts go through a mandatory warm-up period.
 """
 from __future__ import annotations
-import math, random, time
+
+import math
+import random
+import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal, Optional
 
 Phase = Literal["warmup", "ramping", "steady", "throttled"]
@@ -47,7 +50,7 @@ class TokenBucket:
         self.action_type = action_type
         self.max_tokens = max_tokens
         self.refill_per_hour = refill_per_hour
-        self._key = f"pacing:bucket:{account_id}:{action_type}:{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+        self._key = f"pacing:bucket:{account_id}:{action_type}:{datetime.now(UTC).strftime('%Y%m%d')}"
 
     async def available(self) -> int:
         data = await self.redis.hgetall(self._key)
@@ -84,7 +87,7 @@ class TokenBucket:
 
 class PacingController:
     """Manages pacing for a single Instagram account."""
-    def __init__(self, redis_client, account_id: str, config: PacingConfig, phase: Phase = "warmup", warmup_day: int = 0, consecutive_blocks: int = 0, last_block_at: Optional[datetime] = None):
+    def __init__(self, redis_client, account_id: str, config: PacingConfig, phase: Phase = "warmup", warmup_day: int = 0, consecutive_blocks: int = 0, last_block_at: datetime | None = None):
         self.redis = redis_client
         self.account_id = account_id
         self.config = config
@@ -110,12 +113,12 @@ class PacingController:
         if self.consecutive_blocks >= self.config.max_consecutive_blocks: return True
         if self.last_block_at:
             cooldown_end = self.last_block_at + timedelta(minutes=self.config.block_cooldown_minutes * (2 ** self.consecutive_blocks))
-            return datetime.now(timezone.utc) < cooldown_end
+            return datetime.now(UTC) < cooldown_end
         return False
 
     @property
     def is_active_hours(self) -> bool:
-        h = datetime.now(timezone.utc).hour
+        h = datetime.now(UTC).hour
         if self.config.active_start_hour <= self.config.active_end_hour:
             return self.config.active_start_hour <= h < self.config.active_end_hour
         else:
@@ -156,7 +159,7 @@ class PacingController:
 
     def record_block(self, severity: str = "soft") -> None:
         self.consecutive_blocks += 1
-        self.last_block_at = datetime.now(timezone.utc)
+        self.last_block_at = datetime.now(UTC)
         if severity == "hard":
             self.consecutive_blocks += 1
             self.phase = "throttled"
@@ -164,7 +167,23 @@ class PacingController:
             self.phase = "throttled"
 
     def record_success(self) -> None:
-        pass  # placeholder for decay logic
+        """A clean action is evidence the account is not currently flagged.
+
+        Consecutive blocks decay by one per success (never below zero), and a
+        full recovery clears the throttled phase back to whatever the warmup
+        schedule says it should be. This must stay strictly slower than
+        `record_block`'s increment so a block is never "cancelled out" by a
+        single lucky action.
+        """
+        if self.consecutive_blocks > 0:
+            self.consecutive_blocks -= 1
+        if self.consecutive_blocks == 0 and self.phase == "throttled":
+            if self.warmup_day < 3:
+                self.phase = "warmup"
+            elif self.warmup_day < self.config.warmup_days:
+                self.phase = "ramping"
+            else:
+                self.phase = "steady"
 
     def advance_warmup(self) -> None:
         self.warmup_day += 1
