@@ -96,6 +96,7 @@ class PacingController:
         self.consecutive_blocks = consecutive_blocks
         self.last_block_at = last_block_at
         self._buckets: dict[ActionType, TokenBucket] = {}
+        self._last_advanced_date = None  # set on first advance_day_if_needed call
         self._init_buckets()
 
     def _init_buckets(self) -> None:
@@ -191,3 +192,26 @@ class PacingController:
         elif self.warmup_day < self.config.warmup_days: self.phase = "ramping"
         else: self.phase = "steady"
         self._init_buckets()
+
+    def advance_day_if_needed(self, now: datetime | None = None) -> bool:
+        """Advances warmup once for each calendar day (UTC) that has passed
+        since the last call, without needing an external scheduler.
+
+        A long-running worker calls this once per cycle; it is a no-op
+        within the same day. The very first call only records today's date
+        as the baseline — it never advances warmup on day zero. If more
+        than one day has elapsed (e.g. the worker was down), it catches up
+        by advancing once per missed day rather than skipping ahead.
+        Returns True if warmup was advanced at least once.
+        """
+        today = (now or datetime.now(UTC)).date()
+        if self._last_advanced_date is None:
+            self._last_advanced_date = today
+            return False
+        days_elapsed = (today - self._last_advanced_date).days
+        if days_elapsed <= 0:
+            return False
+        for _ in range(days_elapsed):
+            self.advance_warmup()
+        self._last_advanced_date = today
+        return True

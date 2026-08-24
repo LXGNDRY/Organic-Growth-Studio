@@ -59,6 +59,12 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
     logger.info("worker.starting", account_id=account_id, live=live, cycles=cycles)
 
     for i in range(cycles):
+        # Warmup only progresses once per calendar day, regardless of how
+        # many cycles run within that day — without this, a long-running
+        # worker would stay on the day-0 budget forever.
+        if pacing.advance_day_if_needed():
+            logger.info("worker.warmup_advanced", account_id=account_id, warmup_day=pacing.warmup_day, phase=pacing.phase)
+
         if pacing.is_throttled:
             logger.warning("worker.throttled", account_id=account_id, risk_score=pacing.risk_score())
 
