@@ -15,7 +15,10 @@ export default function Targeting() {
   });
 
   const update = useMutation({
-    mutationFn: (data: any) => accountId ? updateTargetingConfig(accountId, data) : null,
+    mutationFn: async (data: any) => {
+      if (!accountId) throw new Error("No account selected");
+      return updateTargetingConfig(accountId, data);
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["targeting", accountId] }); setSaved(true); setTimeout(() => setSaved(false), 2000); },
   });
 
