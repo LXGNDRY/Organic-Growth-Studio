@@ -1,63 +1,122 @@
-import asyncio, structlog
-from datetime import datetime, timezone
-from src.config import get_settings
-from src.pacing import PacingConfig, PacingController
-from src.execution import ActionExecutor
+"""Worker entrypoint — runs the engagement engine for a single account.
 
-settings = get_settings()
+Usage:
+    python -m src.main <account_id> [--live] [--cycles N] [--sleep SECONDS]
+
+Defaults to dry-run, a small number of cycles, and a short sleep — this is
+meant to be run locally against the real engine to prove it works before
+any SaaS wrapper exists around it.
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+
+import structlog
+
+from src.config import get_settings
+from src.db import Database
+from src.discovery import TargetDiscoveryService
+from src.engine import EngagementEngine
+from src.execution import ActionExecutor
+from src.feedback import make_feedback_sink, record_audit_event
+from src.pacing import PacingConfig, PacingController
+
 logger = structlog.get_logger()
 
-class EngagementWorker:
-    def __init__(self, account_id: str):
-        self.account_id = account_id
-        self.running = False
-        self.pacing: PacingController | None = None
-        self.executor: ActionExecutor | None = None
+DEFAULT_TARGETING_CONFIG = {
+    "min_followers": 100,
+    "max_followers": 50000,
+    "skip_private_accounts": True,
+}
 
-    async def start(self) -> None:
-        self.running = True
-        logger.info("worker.started", account_id=self.account_id)
-        import redis.asyncio as redis
-        r = redis.from_url(settings.redis_url)
-        self.pacing = PacingController(redis_client=r, account_id=self.account_id, config=PacingConfig())
-        self.executor = ActionExecutor(account_id=self.account_id)
-        await self._run_loop()
 
-    async def stop(self) -> None:
-        self.running = False
-        logger.info("worker.stopped", account_id=self.account_id)
+async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) -> None:
+    settings = get_settings()
 
-    async def _run_loop(self) -> None:
-        while self.running:
-            try: await self._tick()
-            except Exception as e:
-                logger.exception("worker.tick_error", account_id=self.account_id, error=str(e))
-                await asyncio.sleep(10)
+    import redis.asyncio as redis
 
-    async def _tick(self) -> None:
-        if not self.pacing or not self.executor:
-            await asyncio.sleep(5); return
-        if self.pacing.is_throttled:
-            logger.info("worker.throttled", account_id=self.account_id, blocks=self.pacing.consecutive_blocks)
-            await asyncio.sleep(60); return
-        if not self.pacing.is_active_hours:
-            await asyncio.sleep(300); return
-        if await self.pacing.consume_token("like"):  # type: ignore[arg-type]
-            result = await self.executor.like(target_id="placeholder", media_id="placeholder")
-            if result.success: self.pacing.record_success()
-            else:
-                sev = "hard" if result.status.value == "blocked" else "soft"
-                self.pacing.record_block(severity=sev)
-            logger.info("worker.action_executed", account_id=self.account_id, action_type="like", success=result.success, status=result.status.value, risk_score=self.pacing.risk_score())
-        delay = self.pacing.next_action_delay()
-        await asyncio.sleep(delay)
+    redis_client = redis.from_url(settings.redis_url)
+    db = Database(settings.database_url)
+    await db.create_all()
 
-async def main():
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: python -m src.main <account_id>"); sys.exit(1)
-    w = EngagementWorker(sys.argv[1])
-    await w.start()
+    pacing = PacingController(
+        redis_client=redis_client,
+        account_id=account_id,
+        config=PacingConfig(
+            warmup_days=settings.default_warmup_days,
+            initial_daily_budget=settings.default_initial_actions,
+            max_consecutive_blocks=settings.max_consecutive_blocks,
+            block_cooldown_minutes=settings.block_cooldown_minutes,
+        ),
+    )
+    executor = ActionExecutor(account_id=account_id, dry_run=not live)
+    # In dry-run mode there is no real sourcing yet, so we simulate discovery
+    # candidates too — this proves the full pipeline wiring end to end
+    # without depending on unimplemented Instagram scraping/API access.
+    discovery = TargetDiscoveryService(simulated=not live)
+
+    logger.info("worker.starting", account_id=account_id, live=live, cycles=cycles)
+
+    for i in range(cycles):
+        # Warmup only progresses once per calendar day, regardless of how
+        # many cycles run within that day — without this, a long-running
+        # worker would stay on the day-0 budget forever.
+        if pacing.advance_day_if_needed():
+            logger.info("worker.warmup_advanced", account_id=account_id, warmup_day=pacing.warmup_day, phase=pacing.phase)
+
+        if pacing.is_throttled:
+            logger.warning("worker.throttled", account_id=account_id, risk_score=pacing.risk_score())
+
+        async with db.session() as session:
+            sink = make_feedback_sink(session, account_id)
+            engine = EngagementEngine(account_id, pacing, executor, discovery=discovery, on_result=sink)
+            cycle = await engine.run_cycle(DEFAULT_TARGETING_CONFIG)
+            await record_audit_event(
+                session, account_id, "cycle.completed",
+                {
+                    "cycle": i, "discovered": cycle.discovered, "scored": cycle.scored,
+                    "attempted": cycle.actions_attempted, "completed": cycle.actions_completed,
+                    "blocked": cycle.actions_blocked, "throttled": cycle.throttled,
+                    "risk_score": pacing.risk_score(),
+                },
+            )
+            await session.commit()
+
+        logger.info(
+            "worker.cycle_done", account_id=account_id, cycle=i, discovered=cycle.discovered,
+            attempted=cycle.actions_attempted, completed=cycle.actions_completed,
+            blocked=cycle.actions_blocked, throttled=cycle.throttled, risk_score=pacing.risk_score(),
+        )
+
+        if i < cycles - 1:
+            await asyncio.sleep(sleep_seconds)
+
+    await db.dispose()
+    await redis_client.aclose()
+    logger.info("worker.finished", account_id=account_id)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the Instagro engagement engine for one account.")
+    parser.add_argument("account_id")
+    parser.add_argument("--live", action="store_true", help="execute against real Instagram (not yet wired — see below)")
+    parser.add_argument("--cycles", type=int, default=5)
+    parser.add_argument("--sleep", type=float, default=1.0, help="seconds to sleep between cycles")
+    args = parser.parse_args()
+    if args.live:
+        # There is no real InstagramClient wired into this CLI yet, so
+        # `--live` can never start a cycle today — `ActionExecutor` requires
+        # a real client. Fail fast, before spinning up Redis/Postgres, with
+        # an explanation instead of letting the ValueError surface deep in
+        # `run()`.
+        parser.error(
+            "--live is not usable yet: this CLI has no real InstagramClient "
+            "implementation to pass to ActionExecutor. Wire one in run() "
+            "before using --live."
+        )
+    asyncio.run(run(args.account_id, cycles=args.cycles, sleep_seconds=args.sleep, live=args.live))
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

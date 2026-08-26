@@ -1,6 +1,8 @@
+from datetime import UTC
 from unittest.mock import AsyncMock
-import pytest
+
 from src.pacing import PacingConfig, PacingController, TokenBucket
+
 
 class TestPacingConfig:
     def test_initial_budget(self):
@@ -71,6 +73,38 @@ class TestPacingController:
         assert ctrl.warmup_day == 1
         for _ in range(14): ctrl.advance_warmup()
         assert ctrl.phase == "steady"
+
+    def test_advance_day_if_needed_baseline_does_not_advance(self):
+        from datetime import datetime
+        ctrl, _ = self._make()
+        advanced = ctrl.advance_day_if_needed(now=datetime(2026, 1, 1, tzinfo=UTC))
+        assert advanced is False
+        assert ctrl.warmup_day == 0
+
+    def test_advance_day_if_needed_same_day_is_a_noop(self):
+        from datetime import datetime
+        ctrl, _ = self._make()
+        ctrl.advance_day_if_needed(now=datetime(2026, 1, 1, 8, tzinfo=UTC))
+        advanced = ctrl.advance_day_if_needed(now=datetime(2026, 1, 1, 20, tzinfo=UTC))
+        assert advanced is False
+        assert ctrl.warmup_day == 0
+
+    def test_advance_day_if_needed_advances_once_per_new_day(self):
+        from datetime import datetime
+        ctrl, _ = self._make()
+        ctrl.advance_day_if_needed(now=datetime(2026, 1, 1, tzinfo=UTC))
+        advanced = ctrl.advance_day_if_needed(now=datetime(2026, 1, 2, tzinfo=UTC))
+        assert advanced is True
+        assert ctrl.warmup_day == 1
+
+    def test_advance_day_if_needed_catches_up_missed_days(self):
+        from datetime import datetime
+        ctrl, _ = self._make()
+        ctrl.advance_day_if_needed(now=datetime(2026, 1, 1, tzinfo=UTC))
+        # worker was "down" for 4 days — catch up, don't skip ahead
+        advanced = ctrl.advance_day_if_needed(now=datetime(2026, 1, 5, tzinfo=UTC))
+        assert advanced is True
+        assert ctrl.warmup_day == 4
 
     def test_delay_positive(self):
         ctrl, _ = self._make()
