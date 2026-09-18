@@ -148,13 +148,19 @@ class ActionExecutor:
     they must also flip `dry_run=False`.
     """
 
-    def __init__(self, account_id: str, client: InstagramClient | None = None, dry_run: bool = True):
+    def __init__(self, account_id: str, client: InstagramClient | None = None, dry_run: bool = True, proxy_url: str | None = None):
         self.account_id = account_id
         self.dry_run = dry_run
         self._live_client = client
         self._sim_client = SimulatedInstagramClient()
+        self.proxy_url = proxy_url
         if not dry_run and client is None:
             raise ValueError("a real InstagramClient is required when dry_run=False")
+
+    @property
+    def redacted_proxy(self) -> str | None:
+        """Safe-for-logs form of the assigned proxy — never the raw URL."""
+        return ProxyManager.redact(self.proxy_url)
 
     @property
     def _client(self) -> InstagramClient:
@@ -190,3 +196,22 @@ class ProxyManager:
         url = f"http://{account_id}:password@proxy.example.com:8080"
         self._account_proxies[account_id] = url
         return url
+
+    @staticmethod
+    def redact(proxy_url: str | None) -> str | None:
+        """Strips embedded credentials from a proxy URL for safe logging.
+
+        A proxy URL is exactly the kind of secret the hard rule "never log
+        credentials" covers — `assign_proxy` embeds one directly in the
+        URL — so this is the only form of it that should ever reach a log
+        line or audit record.
+        """
+        if not proxy_url:
+            return proxy_url
+        if "@" not in proxy_url:
+            return proxy_url
+        scheme_sep = proxy_url.find("://")
+        prefix = proxy_url[: scheme_sep + 3] if scheme_sep != -1 else ""
+        rest = proxy_url[len(prefix) :]
+        _, _, host = rest.partition("@")
+        return f"{prefix}***:***@{host}"

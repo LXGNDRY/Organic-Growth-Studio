@@ -41,7 +41,9 @@ async def test_token_bucket_is_scoped_per_account_and_action(real_redis):
 
 
 async def test_controller_cannot_consume_past_budget(real_redis):
-    cfg = PacingConfig(warmup_days=14, initial_daily_budget=5)
+    # active hours span the full day so this doesn't flake depending on the
+    # real wall-clock hour it happens to run at.
+    cfg = PacingConfig(warmup_days=14, initial_daily_budget=5, active_start_hour=0, active_end_hour=24)
     ctrl = PacingController(redis_client=real_redis, account_id="acct-5", config=cfg)
     consumed = 0
     for _ in range(100):

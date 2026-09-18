@@ -6,6 +6,7 @@ from src.execution import (
     ExecutionResult,
     IGBlockDetector,
     InstagramClient,
+    ProxyManager,
 )
 
 
@@ -65,3 +66,37 @@ class TestBlockDetection:
     def test_unknown_failure_is_conservatively_soft(self):
         r = ExecutionResult(success=False, status=ActionStatus.FAILED, error_code="unknown_error")
         assert IGBlockDetector.classify(r) == "soft"
+
+
+class TestProxyRedaction:
+    def test_redacts_embedded_credentials(self):
+        raw = "http://acct-1:s3cr3t@proxy.example.com:8080"
+        redacted = ProxyManager.redact(raw)
+        assert "s3cr3t" not in redacted
+        assert "acct-1" not in redacted
+        assert "proxy.example.com:8080" in redacted
+
+    def test_passes_through_url_without_credentials(self):
+        assert ProxyManager.redact("http://proxy.example.com:8080") == "http://proxy.example.com:8080"
+
+    def test_passes_through_none(self):
+        assert ProxyManager.redact(None) is None
+
+    @pytest.mark.asyncio
+    async def test_assign_proxy_output_is_fully_redactable(self):
+        manager = ProxyManager()
+        url = await manager.assign_proxy("acct-1")
+        redacted = ProxyManager.redact(url)
+        assert "acct-1" not in redacted or "password" not in redacted
+        assert "password" not in redacted
+
+
+class TestActionExecutorProxyWiring:
+    def test_redacted_proxy_never_exposes_raw_credentials(self):
+        ex = ActionExecutor(account_id="a1", proxy_url="http://a1:hunter2@proxy.example.com:8080")
+        assert "hunter2" not in ex.redacted_proxy
+        assert "proxy.example.com:8080" in ex.redacted_proxy
+
+    def test_redacted_proxy_is_none_when_no_proxy_assigned(self):
+        ex = ActionExecutor(account_id="a1")
+        assert ex.redacted_proxy is None

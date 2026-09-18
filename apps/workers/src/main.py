@@ -18,8 +18,8 @@ from src.config import get_settings
 from src.db import Database
 from src.discovery import TargetDiscoveryService
 from src.engine import EngagementEngine
-from src.execution import ActionExecutor
-from src.feedback import make_feedback_sink, record_audit_event
+from src.execution import ActionExecutor, ProxyManager
+from src.feedback import make_feedback_sink, record_audit_event, record_pacing_snapshot
 from src.pacing import PacingConfig, PacingController
 
 logger = structlog.get_logger()
@@ -50,13 +50,18 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
             block_cooldown_minutes=settings.block_cooldown_minutes,
         ),
     )
-    executor = ActionExecutor(account_id=account_id, dry_run=not live)
+    proxy_manager = ProxyManager(provider=settings.proxy_provider)
+    proxy_url = await proxy_manager.assign_proxy(account_id)
+    executor = ActionExecutor(account_id=account_id, dry_run=not live, proxy_url=proxy_url)
     # In dry-run mode there is no real sourcing yet, so we simulate discovery
     # candidates too — this proves the full pipeline wiring end to end
     # without depending on unimplemented Instagram scraping/API access.
     discovery = TargetDiscoveryService(simulated=not live)
 
-    logger.info("worker.starting", account_id=account_id, live=live, cycles=cycles)
+    logger.info(
+        "worker.starting", account_id=account_id, live=live, cycles=cycles,
+        proxy=executor.redacted_proxy,
+    )
 
     for i in range(cycles):
         # Warmup only progresses once per calendar day, regardless of how
@@ -81,6 +86,9 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
                     "risk_score": pacing.risk_score(),
                 },
             )
+            # A snapshot per cycle gives an observer the account's current
+            # risk without replaying the whole action log.
+            await record_pacing_snapshot(session, account_id, pacing)
             await session.commit()
 
         logger.info(
