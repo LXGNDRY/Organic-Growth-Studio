@@ -5,11 +5,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-from src.db import AuditLogEntry, Database, EngagementActionLog
+from src.db import AuditLogEntry, Database, EngagementActionLog, PacingStateSnapshot
 from src.discovery import DiscoveredAccount, TargetDiscoveryService, TargetSource
 from src.engine import EngagementEngine
 from src.execution import ActionExecutor
-from src.feedback import make_feedback_sink
+from src.feedback import make_feedback_sink, record_pacing_snapshot
 from src.pacing import PacingConfig, PacingController
 
 TEST_DATABASE_URL = os.environ.get(
@@ -48,7 +48,9 @@ def make_pacing():
     mr = AsyncMock()
     mr.hgetall = AsyncMock(return_value={})
     mr.eval = AsyncMock(return_value=1)
-    cfg = PacingConfig(warmup_days=14, initial_daily_budget=50)
+    # active_start_hour/active_end_hour span the full day so these tests
+    # don't flake depending on the real wall-clock hour they happen to run at.
+    cfg = PacingConfig(warmup_days=14, initial_daily_budget=50, active_start_hour=0, active_end_hour=24)
     return PacingController(redis_client=mr, account_id="acct-db", config=cfg)
 
 
@@ -91,11 +93,11 @@ async def test_failed_actions_also_write_an_audit_entry(db):
     pacing = make_pacing()
 
     class AlwaysFailClient:
-        async def like(self, target_id, media_id):
+        async def like(self, target_id, media_id, proxy_url=None):
             from src.execution import ActionStatus, ExecutionResult
             return ExecutionResult(success=False, status=ActionStatus.RATE_LIMITED, http_status=429, error_code="rate_limited", dry_run=True)
 
-        async def follow(self, target_id, target_username):
+        async def follow(self, target_id, target_username, proxy_url=None):
             return await self.like(target_id, target_username)
 
     executor = ActionExecutor(account_id="acct-db2", client=AlwaysFailClient(), dry_run=False)
@@ -112,3 +114,24 @@ async def test_failed_actions_also_write_an_audit_entry(db):
     async with db.session() as session:
         audits = (await session.execute(select(AuditLogEntry).where(AuditLogEntry.account_id == "acct-db2"))).scalars().all()
         assert any(a.event == "action.failed" for a in audits)
+
+
+@pytest.mark.asyncio
+async def test_pacing_snapshot_reflects_controller_state(db):
+    pacing = make_pacing()
+    pacing.record_block("hard")
+
+    async with db.session() as session:
+        await record_pacing_snapshot(session, "acct-snap", pacing)
+        await session.commit()
+
+    async with db.session() as session:
+        rows = (
+            await session.execute(select(PacingStateSnapshot).where(PacingStateSnapshot.account_id == "acct-snap"))
+        ).scalars().all()
+        assert len(rows) == 1
+        snap = rows[0]
+        assert snap.phase == pacing.phase
+        assert snap.consecutive_blocks == pacing.consecutive_blocks == 2
+        assert snap.is_throttled == pacing.is_throttled
+        assert snap.risk_score == pacing.risk_score()

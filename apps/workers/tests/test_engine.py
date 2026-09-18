@@ -35,7 +35,9 @@ def make_pacing(**overrides):
     mr = AsyncMock()
     mr.hgetall = AsyncMock(return_value={})
     mr.eval = AsyncMock(return_value=1)
-    defaults = {"warmup_days": 14, "initial_daily_budget": 50}
+    # active_start_hour/active_end_hour span the full day so these tests
+    # don't flake depending on the real wall-clock hour they happen to run at.
+    defaults = {"warmup_days": 14, "initial_daily_budget": 50, "active_start_hour": 0, "active_end_hour": 24}
     defaults.update(overrides)
     cfg = PacingConfig(**defaults)
     return PacingController(redis_client=mr, account_id="acct-e2e", config=cfg), mr
@@ -131,10 +133,10 @@ class TestEngineWiring:
         pacing, mr = make_pacing()
 
         class ExplodingClient:
-            async def like(self, target_id, media_id):
+            async def like(self, target_id, media_id, proxy_url=None):
                 raise ConnectionError("boom")
 
-            async def follow(self, target_id, target_username):
+            async def follow(self, target_id, target_username, proxy_url=None):
                 raise ConnectionError("boom")
 
         executor = ActionExecutor(account_id="acct-e2e", client=ExplodingClient(), dry_run=False)

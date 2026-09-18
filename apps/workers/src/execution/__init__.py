@@ -88,15 +88,21 @@ class InstagramClient:
     the engine must work correctly with *any* implementation of this
     interface, including a fully mocked one, which is what makes it safe to
     validate end-to-end before real credentials are involved.
+
+    `proxy_url` is part of the interface, not an afterthought: a real
+    implementation MUST route its request through it, since per-account
+    proxy assignment is a safety control (mixing IG traffic for multiple
+    accounts over one IP is exactly the pattern that gets accounts flagged
+    together). `ActionExecutor` passes its assigned proxy on every call.
     """
 
-    async def like(self, target_id: str, media_id: str) -> ExecutionResult:
+    async def like(self, target_id: str, media_id: str, proxy_url: str | None = None) -> ExecutionResult:
         raise NotImplementedError("wire a real Instagram transport before going live")
 
-    async def follow(self, target_id: str, target_username: str) -> ExecutionResult:
+    async def follow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         raise NotImplementedError("wire a real Instagram transport before going live")
 
-    async def unfollow(self, target_id: str, target_username: str) -> ExecutionResult:
+    async def unfollow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         raise NotImplementedError("wire a real Instagram transport before going live")
 
 
@@ -107,13 +113,13 @@ class SimulatedInstagramClient(InstagramClient):
         self.success_rate = success_rate
         self._rng = seed or random.Random()
 
-    async def like(self, target_id: str, media_id: str) -> ExecutionResult:
+    async def like(self, target_id: str, media_id: str, proxy_url: str | None = None) -> ExecutionResult:
         return self._simulate(ActionType.LIKE)
 
-    async def follow(self, target_id: str, target_username: str) -> ExecutionResult:
+    async def follow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         return self._simulate(ActionType.FOLLOW)
 
-    async def unfollow(self, target_id: str, target_username: str) -> ExecutionResult:
+    async def unfollow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         return self._simulate(ActionType.UNFOLLOW)
 
     def _simulate(self, action: ActionType) -> ExecutionResult:
@@ -148,30 +154,36 @@ class ActionExecutor:
     they must also flip `dry_run=False`.
     """
 
-    def __init__(self, account_id: str, client: InstagramClient | None = None, dry_run: bool = True):
+    def __init__(self, account_id: str, client: InstagramClient | None = None, dry_run: bool = True, proxy_url: str | None = None):
         self.account_id = account_id
         self.dry_run = dry_run
         self._live_client = client
         self._sim_client = SimulatedInstagramClient()
+        self.proxy_url = proxy_url
         if not dry_run and client is None:
             raise ValueError("a real InstagramClient is required when dry_run=False")
+
+    @property
+    def redacted_proxy(self) -> str | None:
+        """Safe-for-logs form of the assigned proxy — never the raw URL."""
+        return ProxyManager.redact(self.proxy_url)
 
     @property
     def _client(self) -> InstagramClient:
         return self._sim_client if self.dry_run else self._live_client  # type: ignore[return-value]
 
     async def like(self, target_id: str, media_id: str) -> ExecutionResult:
-        result = await self._client.like(target_id, media_id)
+        result = await self._client.like(target_id, media_id, proxy_url=self.proxy_url)
         result.dry_run = self.dry_run
         return result
 
     async def follow(self, target_id: str, target_username: str) -> ExecutionResult:
-        result = await self._client.follow(target_id, target_username)
+        result = await self._client.follow(target_id, target_username, proxy_url=self.proxy_url)
         result.dry_run = self.dry_run
         return result
 
     async def unfollow(self, target_id: str, target_username: str) -> ExecutionResult:
-        result = await self._client.unfollow(target_id, target_username)
+        result = await self._client.unfollow(target_id, target_username, proxy_url=self.proxy_url)
         result.dry_run = self.dry_run
         return result
 
@@ -190,3 +202,22 @@ class ProxyManager:
         url = f"http://{account_id}:password@proxy.example.com:8080"
         self._account_proxies[account_id] = url
         return url
+
+    @staticmethod
+    def redact(proxy_url: str | None) -> str | None:
+        """Strips embedded credentials from a proxy URL for safe logging.
+
+        A proxy URL is exactly the kind of secret the hard rule "never log
+        credentials" covers — `assign_proxy` embeds one directly in the
+        URL — so this is the only form of it that should ever reach a log
+        line or audit record.
+        """
+        if not proxy_url:
+            return proxy_url
+        if "@" not in proxy_url:
+            return proxy_url
+        scheme_sep = proxy_url.find("://")
+        prefix = proxy_url[: scheme_sep + 3] if scheme_sep != -1 else ""
+        rest = proxy_url[len(prefix) :]
+        _, _, host = rest.partition("@")
+        return f"{prefix}***:***@{host}"
