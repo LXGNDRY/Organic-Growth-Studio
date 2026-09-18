@@ -24,6 +24,12 @@ class DiscoveredAccount:
     bio: str | None = None
     account_age_days: int | None = None
     has_profile_pic: bool | None = None
+    # Inferred, not authoritative — real Instagram accounts don't expose
+    # gender directly; production sourcing would infer it (name/bio/photo
+    # heuristics, same as the "is_business" signal). None means unknown,
+    # not a value to filter on.
+    gender: str | None = None
+    language: str | None = None
 
 class TargetDiscoveryService:
     """Orchestrates target discovery from multiple sources.
@@ -65,6 +71,8 @@ class TargetDiscoveryService:
                     is_business=self._rng.random() < 0.2,
                     account_age_days=self._rng.randint(10, 1500),
                     has_profile_pic=self._rng.random() > 0.05,
+                    gender=self._rng.choice(["male", "female", "unknown"]),
+                    language=self._rng.choice(["en", "es", "pt", "fr", "de"]),
                 )
             )
         return out
@@ -80,6 +88,8 @@ class TargetDiscoveryService:
         max_ratio = cfg.get("follow_back_ratio_max", 5.0)
         skip_private = cfg.get("skip_private_accounts", True)
         skip_business = cfg.get("skip_business_accounts", False)
+        gender = cfg.get("gender", "any")
+        languages = {lang.lower() for lang in cfg.get("languages", [])}
         # Case-insensitive: a targeting rule shouldn't fail to exclude an
         # account just because of how its username happened to be cased.
         blacklist = {u.lower() for u in cfg.get("blacklisted_usernames", [])}
@@ -100,6 +110,11 @@ class TargetDiscoveryService:
                 if ratio < min_ratio or ratio > max_ratio: continue
             if skip_private and c.is_private: continue
             if skip_business and c.is_business: continue
+            # gender/language are inferred signals, never authoritative —
+            # an unknown value is skipped (not excluded), same treatment
+            # as the other inferred/unevaluable fields above.
+            if gender != "any" and c.gender is not None and c.gender != gender: continue
+            if languages and c.language is not None and c.language.lower() not in languages: continue
             if c.username.lower() in blacklist: continue
             out.append(c)
         return out
