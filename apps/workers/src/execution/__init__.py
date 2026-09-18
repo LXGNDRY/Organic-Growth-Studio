@@ -105,6 +105,12 @@ class InstagramClient:
     async def unfollow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         raise NotImplementedError("wire a real Instagram transport before going live")
 
+    async def story_view(self, target_id: str, story_id: str, proxy_url: str | None = None) -> ExecutionResult:
+        raise NotImplementedError("wire a real Instagram transport before going live")
+
+    async def comment(self, target_id: str, media_id: str, text: str, proxy_url: str | None = None) -> ExecutionResult:
+        raise NotImplementedError("wire a real Instagram transport before going live")
+
 
 class SimulatedInstagramClient(InstagramClient):
     """Deterministic-ish fake transport used for dry-run mode and tests."""
@@ -127,6 +133,12 @@ class SimulatedInstagramClient(InstagramClient):
 
     async def unfollow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         return self._simulate(ActionType.UNFOLLOW)
+
+    async def story_view(self, target_id: str, story_id: str, proxy_url: str | None = None) -> ExecutionResult:
+        return self._simulate(ActionType.STORY_VIEW)
+
+    async def comment(self, target_id: str, media_id: str, text: str, proxy_url: str | None = None) -> ExecutionResult:
+        return self._simulate(ActionType.COMMENT)
 
     def _simulate(self, action: ActionType) -> ExecutionResult:
         start = time.time()
@@ -192,6 +204,16 @@ class ActionExecutor:
 
     async def unfollow(self, target_id: str, target_username: str) -> ExecutionResult:
         result = await self._client.unfollow(target_id, target_username, proxy_url=self.proxy_url)
+        result.dry_run = self.dry_run
+        return result
+
+    async def story_view(self, target_id: str, story_id: str) -> ExecutionResult:
+        result = await self._client.story_view(target_id, story_id, proxy_url=self.proxy_url)
+        result.dry_run = self.dry_run
+        return result
+
+    async def comment(self, target_id: str, media_id: str, text: str) -> ExecutionResult:
+        result = await self._client.comment(target_id, media_id, text, proxy_url=self.proxy_url)
         result.dry_run = self.dry_run
         return result
 

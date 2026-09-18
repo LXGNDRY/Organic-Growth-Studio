@@ -44,6 +44,58 @@ class TestDryRunSafety:
         assert result.dry_run is False
 
 
+class TestStoryViewAndComment:
+    @pytest.mark.asyncio
+    async def test_dry_run_simulates_story_view(self):
+        ex = ActionExecutor(account_id="a1")
+        result = await ex.story_view("t1", "s1")
+        assert result.dry_run is True
+        assert result.status in (ActionStatus.COMPLETED, ActionStatus.RATE_LIMITED, ActionStatus.FAILED)
+
+    @pytest.mark.asyncio
+    async def test_dry_run_simulates_comment(self):
+        ex = ActionExecutor(account_id="a1")
+        result = await ex.comment("t1", "m1", "nice!")
+        assert result.dry_run is True
+        assert result.status in (ActionStatus.COMPLETED, ActionStatus.RATE_LIMITED, ActionStatus.FAILED)
+
+    @pytest.mark.asyncio
+    async def test_dry_run_never_touches_live_client_for_story_view_or_comment(self):
+        class ExplodingClient(InstagramClient):
+            async def story_view(self, target_id, story_id, proxy_url=None):
+                raise AssertionError("dry-run must not call the live client")
+
+            async def comment(self, target_id, media_id, text, proxy_url=None):
+                raise AssertionError("dry-run must not call the live client")
+
+        ex = ActionExecutor(account_id="a1", client=ExplodingClient(), dry_run=True)
+        await ex.story_view("t1", "s1")
+        await ex.comment("t1", "m1", "nice!")
+
+    @pytest.mark.asyncio
+    async def test_live_mode_passes_proxy_and_arguments_through(self):
+        seen = {}
+
+        class RecordingClient(InstagramClient):
+            async def story_view(self, target_id, story_id, proxy_url=None):
+                seen["story_view"] = (target_id, story_id, proxy_url)
+                return ExecutionResult(success=True, status=ActionStatus.COMPLETED, http_status=200)
+
+            async def comment(self, target_id, media_id, text, proxy_url=None):
+                seen["comment"] = (target_id, media_id, text, proxy_url)
+                return ExecutionResult(success=True, status=ActionStatus.COMPLETED, http_status=200)
+
+        proxy = "http://a1:hunter2@proxy.example.com:8080"
+        ex = ActionExecutor(account_id="a1", client=RecordingClient(), dry_run=False, proxy_url=proxy)
+        r1 = await ex.story_view("t1", "s1")
+        r2 = await ex.comment("t1", "m1", "nice!")
+
+        assert seen["story_view"] == ("t1", "s1", proxy)
+        assert seen["comment"] == ("t1", "m1", "nice!", proxy)
+        assert r1.dry_run is False
+        assert r2.dry_run is False
+
+
 class TestBlockDetection:
     def test_success_is_clean(self):
         r = ExecutionResult(success=True, status=ActionStatus.COMPLETED, http_status=200)
