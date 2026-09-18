@@ -40,6 +40,9 @@ logger = structlog.get_logger()
 DEFAULT_TARGETING_CONFIG = {
     "min_followers": 100,
     "max_followers": 50000,
+    "min_following": 0,
+    "max_following": 10000,
+    "min_posts": 3,
     "skip_private_accounts": True,
     "skip_business_accounts": False,
     "blacklisted_usernames": [],

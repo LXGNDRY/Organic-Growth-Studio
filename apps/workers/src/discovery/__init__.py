@@ -73,6 +73,9 @@ class TargetDiscoveryService:
         out = []
         min_f = cfg.get("min_followers", 100)
         max_f = cfg.get("max_followers", 50000)
+        min_following = cfg.get("min_following", 0)
+        max_following = cfg.get("max_following", 10000)
+        min_posts = cfg.get("min_posts", 3)
         skip_private = cfg.get("skip_private_accounts", True)
         skip_business = cfg.get("skip_business_accounts", False)
         # Case-insensitive: a targeting rule shouldn't fail to exclude an
@@ -81,6 +84,10 @@ class TargetDiscoveryService:
         for c in candidates:
             if c.follower_count is not None:
                 if c.follower_count < min_f or c.follower_count > max_f: continue
+            if c.following_count is not None:
+                if c.following_count < min_following or c.following_count > max_following: continue
+            if c.post_count is not None:
+                if c.post_count < min_posts: continue
             if skip_private and c.is_private: continue
             if skip_business and c.is_business: continue
             if c.username.lower() in blacklist: continue

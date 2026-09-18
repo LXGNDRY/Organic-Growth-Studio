@@ -14,6 +14,9 @@ from src.main import DEFAULT_TARGETING_CONFIG
 FILTER_KEYS_SUPPORTED_BY_DISCOVERY = {
     "min_followers",
     "max_followers",
+    "min_following",
+    "max_following",
+    "min_posts",
     "skip_private_accounts",
     "skip_business_accounts",
     "blacklisted_usernames",
@@ -40,3 +43,6 @@ def test_default_targeting_config_matches_api_model_defaults():
     assert DEFAULT_TARGETING_CONFIG["skip_business_accounts"] is False
     assert DEFAULT_TARGETING_CONFIG["blacklisted_usernames"] == []
     assert DEFAULT_TARGETING_CONFIG["enabled_actions"] == ["like", "follow"]
+    assert DEFAULT_TARGETING_CONFIG["min_following"] == 0
+    assert DEFAULT_TARGETING_CONFIG["max_following"] == 10000
+    assert DEFAULT_TARGETING_CONFIG["min_posts"] == 3
