@@ -24,10 +24,20 @@ from src.pacing import PacingConfig, PacingController
 
 logger = structlog.get_logger()
 
+# Mirrors the defaults on apps/api's TargetingConfig model. Loading a
+# tenant's actual persisted targeting config would mean reading from the
+# multi-tenant Postgres schema (TargetingConfig, keyed by a UUID
+# account_id tied to instagram_accounts) that hasn't been migrated yet and
+# belongs to the SaaS layer explicitly deferred until the core engine is
+# proven — see apps/workers/README.md. Until that wiring exists, every
+# filter `filter_by_criteria` supports still needs a key here or it's
+# silently never activated by the one real entrypoint.
 DEFAULT_TARGETING_CONFIG = {
     "min_followers": 100,
     "max_followers": 50000,
     "skip_private_accounts": True,
+    "skip_business_accounts": False,
+    "blacklisted_usernames": [],
 }
 
 

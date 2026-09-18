@@ -20,6 +20,7 @@ class DiscoveredAccount:
     following_count: int | None = None
     post_count: int | None = None
     is_private: bool | None = None
+    is_business: bool | None = None
     bio: str | None = None
     account_age_days: int | None = None
     has_profile_pic: bool | None = None
@@ -61,6 +62,7 @@ class TargetDiscoveryService:
                     following_count=following,
                     post_count=self._rng.randint(0, 400),
                     is_private=self._rng.random() < 0.15,
+                    is_business=self._rng.random() < 0.2,
                     account_age_days=self._rng.randint(10, 1500),
                     has_profile_pic=self._rng.random() > 0.05,
                 )
@@ -72,9 +74,15 @@ class TargetDiscoveryService:
         min_f = cfg.get("min_followers", 100)
         max_f = cfg.get("max_followers", 50000)
         skip_private = cfg.get("skip_private_accounts", True)
+        skip_business = cfg.get("skip_business_accounts", False)
+        # Case-insensitive: a targeting rule shouldn't fail to exclude an
+        # account just because of how its username happened to be cased.
+        blacklist = {u.lower() for u in cfg.get("blacklisted_usernames", [])}
         for c in candidates:
             if c.follower_count is not None:
                 if c.follower_count < min_f or c.follower_count > max_f: continue
             if skip_private and c.is_private: continue
+            if skip_business and c.is_business: continue
+            if c.username.lower() in blacklist: continue
             out.append(c)
         return out

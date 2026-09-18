@@ -99,6 +99,7 @@ class EngagementEngine:
             following_count=candidate.following_count or 0,
             post_count=candidate.post_count or 0,
             is_private=bool(candidate.is_private),
+            is_business=bool(candidate.is_business),
             bio=candidate.bio if candidate.bio is not None else "unknown bio",
             account_age_days=candidate.account_age_days if candidate.account_age_days is not None else 180,
             has_profile_pic=candidate.has_profile_pic if candidate.has_profile_pic is not None else True,
