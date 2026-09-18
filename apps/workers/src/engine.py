@@ -3,8 +3,9 @@ discovery -> scoring -> pacing -> execution -> feedback together.
 
 This module exists so there is exactly one code path capable of executing
 an action against a target, and that path cannot skip the pacing check.
-Nothing outside `EngagementEngine.run_cycle` is allowed to call
-`ActionExecutor` directly in worker code.
+Nothing outside `EngagementEngine.run_cycle` / `run_unfollow_cycle` is
+allowed to call `ActionExecutor` directly in worker code — both funnel
+through the same `_execute_one`.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from dataclasses import dataclass, field
 
 import structlog
 
-from src.discovery import DiscoveredAccount, TargetDiscoveryService
+from src.discovery import DiscoveredAccount, TargetDiscoveryService, TargetSource
 from src.execution import ActionExecutor, ActionStatus, ActionType, ExecutionResult, IGBlockDetector
 from src.pacing import PacingController
 from src.scoring import AccountProfile, calculate_quality_score, estimate_follow_probability
@@ -45,6 +46,7 @@ class CycleResult:
 @dataclass
 class ExecutedAction:
     target_username: str
+    target_instagram_id: str
     action_type: str
     result: ExecutionResult
     quality_score: int
@@ -197,27 +199,81 @@ class EngagementEngine:
                 if result is None:
                     continue
 
-                executed = ExecutedAction(
-                    target_username=target.account.username,
-                    action_type=action_type.value,
-                    result=result,
-                    quality_score=target.quality_score,
-                )
-                cycle.executed.append(executed)
-                if result.success:
-                    cycle.actions_completed += 1
-                else:
-                    cycle.actions_blocked += 1
+                await self._record_and_advance(cycle, target, action_type, result)
 
-                if self.on_result is not None:
-                    await self.on_result(executed)
+        return cycle
 
-                # Restore human-like spacing between individual actions —
-                # without this, a cycle with many eligible targets would
-                # burst the account's entire available budget back-to-back,
-                # which is exactly the bot-like pattern pacing exists to
-                # prevent. Only the whole-cycle sleep in the CLI is not a
-                # substitute for this.
-                await self._delay_fn(self.pacing.next_action_delay())
+    async def _record_and_advance(
+        self, cycle: CycleResult, target: ScoredTarget, action_type: ActionType, result: ExecutionResult,
+    ) -> None:
+        """Shared bookkeeping for both `run_cycle` and `run_unfollow_cycle`:
+        record the outcome, notify the feedback sink, and pace the next
+        action. Kept in one place so the two loops can't drift apart on
+        what "an executed action" means.
+        """
+        executed = ExecutedAction(
+            target_username=target.account.username,
+            target_instagram_id=target.account.instagram_id,
+            action_type=action_type.value,
+            result=result,
+            quality_score=target.quality_score,
+        )
+        cycle.executed.append(executed)
+        if result.success:
+            cycle.actions_completed += 1
+        else:
+            cycle.actions_blocked += 1
+
+        if self.on_result is not None:
+            await self.on_result(executed)
+
+        # Restore human-like spacing between individual actions — without
+        # this, a cycle with many eligible targets would burst the
+        # account's entire available budget back-to-back, which is exactly
+        # the bot-like pattern pacing exists to prevent. Only the
+        # whole-cycle sleep in the CLI is not a substitute for this.
+        await self._delay_fn(self.pacing.next_action_delay())
+
+    async def run_unfollow_cycle(self, stale_follows: list[tuple[str, str]]) -> CycleResult:
+        """Unfollows accounts followed more than `unfollow_after_days` ago
+        that haven't followed back — the other half of the follow/unfollow
+        growth pattern, which discovery/scoring plays no part in: these
+        targets come from this account's own follow history, not from
+        sourcing. Still fully pacing-gated through `_execute_one`, the same
+        as `run_cycle` — there is no separate, ungated unfollow path.
+
+        `stale_follows` is a list of (instagram_id, username) tuples,
+        typically from `feedback.find_stale_follows`.
+        """
+        cycle = CycleResult(account_id=self.account_id)
+
+        if self.pacing.is_throttled:
+            cycle.throttled = True
+            logger.info("engine.unfollow_cycle_skipped_throttled", account_id=self.account_id)
+            return cycle
+
+        cycle.discovered = len(stale_follows)
+        cycle.scored = len(stale_follows)
+
+        for instagram_id, username in stale_follows:
+            if self.pacing.is_throttled:
+                cycle.throttled = True
+                break
+            if not await self.pacing.can_perform(ActionType.UNFOLLOW.value):  # type: ignore[arg-type]
+                continue
+
+            target = ScoredTarget(
+                account=DiscoveredAccount(
+                    username=username, instagram_id=instagram_id,
+                    source=TargetSource.AI_SUGGESTED, source_ref="unfollow_after_days",
+                ),
+                quality_score=0, follow_probability=0.0,
+            )
+            cycle.actions_attempted += 1
+            result = await self._execute_one(target, ActionType.UNFOLLOW)
+            if result is None:
+                continue
+
+            await self._record_and_advance(cycle, target, ActionType.UNFOLLOW, result)
 
         return cycle

@@ -19,7 +19,12 @@ from src.db import Database
 from src.discovery import TargetDiscoveryService
 from src.engine import EngagementEngine
 from src.execution import ActionExecutor, ProxyManager
-from src.feedback import make_feedback_sink, record_audit_event, record_pacing_snapshot
+from src.feedback import (
+    find_stale_follows,
+    make_feedback_sink,
+    record_audit_event,
+    record_pacing_snapshot,
+)
 from src.pacing import PacingConfig, PacingController
 
 logger = structlog.get_logger()
@@ -39,6 +44,11 @@ DEFAULT_TARGETING_CONFIG = {
     "skip_business_accounts": False,
     "blacklisted_usernames": [],
 }
+
+# Matches TargetingConfig.unfollow_after_days' default. Not part of
+# DEFAULT_TARGETING_CONFIG since it doesn't feed filter_by_criteria — it
+# drives the separate unfollow pass instead.
+DEFAULT_UNFOLLOW_AFTER_DAYS = 14
 
 
 async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) -> None:
@@ -87,12 +97,20 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
             sink = make_feedback_sink(session, account_id)
             engine = EngagementEngine(account_id, pacing, executor, discovery=discovery, on_result=sink)
             cycle = await engine.run_cycle(DEFAULT_TARGETING_CONFIG)
+
+            # The other half of follow/unfollow: accounts followed more
+            # than unfollow_after_days ago that never followed back.
+            stale = await find_stale_follows(session, account_id, DEFAULT_UNFOLLOW_AFTER_DAYS)
+            unfollow_cycle = await engine.run_unfollow_cycle(stale)
+
             await record_audit_event(
                 session, account_id, "cycle.completed",
                 {
                     "cycle": i, "discovered": cycle.discovered, "scored": cycle.scored,
                     "attempted": cycle.actions_attempted, "completed": cycle.actions_completed,
                     "blocked": cycle.actions_blocked, "throttled": cycle.throttled,
+                    "unfollow_attempted": unfollow_cycle.actions_attempted,
+                    "unfollow_completed": unfollow_cycle.actions_completed,
                     "risk_score": pacing.risk_score(),
                 },
             )
@@ -104,7 +122,10 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
         logger.info(
             "worker.cycle_done", account_id=account_id, cycle=i, discovered=cycle.discovered,
             attempted=cycle.actions_attempted, completed=cycle.actions_completed,
-            blocked=cycle.actions_blocked, throttled=cycle.throttled, risk_score=pacing.risk_score(),
+            blocked=cycle.actions_blocked, throttled=cycle.throttled,
+            unfollow_attempted=unfollow_cycle.actions_attempted,
+            unfollow_completed=unfollow_cycle.actions_completed,
+            risk_score=pacing.risk_score(),
         )
 
         if i < cycles - 1:

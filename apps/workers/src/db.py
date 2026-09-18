@@ -37,10 +37,12 @@ class EngagementActionLog(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     account_id: Mapped[str] = mapped_column(String(100), index=True)
+    target_instagram_id: Mapped[str] = mapped_column(String(100), default="")
     target_username: Mapped[str] = mapped_column(String(100))
     action_type: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20))
     success: Mapped[bool] = mapped_column(Boolean)
+    followed_back: Mapped[bool | None] = mapped_column(Boolean, default=None)
     dry_run: Mapped[bool] = mapped_column(Boolean, default=True)
     quality_score: Mapped[int] = mapped_column(Integer, default=0)
     http_status: Mapped[int | None] = mapped_column(Integer)
@@ -87,6 +89,31 @@ class Database:
     async def create_all(self) -> None:
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await self._sync_new_columns(conn)
+
+    async def _sync_new_columns(self, conn) -> None:
+        """Adds columns to tables `create_all` can't touch because they
+        already exist from a previous version of this schema.
+
+        This worker-owned schema has no Alembic migrations (see
+        apps/workers/README.md) — it's meant to stay a minimal, throwaway
+        substrate until the SaaS layer takes over persistence. `ADD COLUMN
+        IF NOT EXISTS` is the deliberately low-ceremony stopgap for that:
+        safe to run on every startup, a no-op once the column exists, and
+        avoids ever hand-rolling a real migration for this table before it
+        needs one. If this list grows past a couple of entries, that's the
+        signal to introduce real migrations instead of extending it.
+        """
+        if not conn.dialect.name.startswith("postgres"):
+            return
+        from sqlalchemy import text
+
+        await conn.execute(
+            text("ALTER TABLE worker_engagement_actions ADD COLUMN IF NOT EXISTS target_instagram_id VARCHAR(100) DEFAULT ''")
+        )
+        await conn.execute(
+            text("ALTER TABLE worker_engagement_actions ADD COLUMN IF NOT EXISTS followed_back BOOLEAN")
+        )
 
     async def drop_all(self) -> None:
         async with self.engine.begin() as conn:
