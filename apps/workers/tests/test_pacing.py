@@ -17,6 +17,33 @@ class TestPacingConfig:
         mx = c.max_daily_likes + c.max_daily_follows + c.max_daily_unfollows + c.max_daily_story_views + c.max_daily_comments
         assert c.daily_budget_for_day(20) >= mx * 0.9
 
+class TestActiveHoursOverride:
+    def test_none_or_empty_override_is_a_noop(self):
+        c = PacingConfig(active_start_hour=9, active_end_hour=22)
+        assert c.with_active_hours_override(None) is c
+        assert c.with_active_hours_override({}) is c
+
+    def test_full_override_replaces_both_hours(self):
+        c = PacingConfig(active_start_hour=9, active_end_hour=22)
+        overridden = c.with_active_hours_override({"start_hour": 6, "end_hour": 20})
+        assert overridden.active_start_hour == 6
+        assert overridden.active_end_hour == 20
+        # original config is untouched — this is a per-account copy, not a mutation
+        assert c.active_start_hour == 9
+        assert c.active_end_hour == 22
+
+    def test_partial_override_keeps_the_other_bound(self):
+        c = PacingConfig(active_start_hour=9, active_end_hour=22)
+        overridden = c.with_active_hours_override({"start_hour": 6})
+        assert overridden.active_start_hour == 6
+        assert overridden.active_end_hour == 22
+
+    def test_override_does_not_affect_other_fields(self):
+        c = PacingConfig(warmup_days=14, initial_daily_budget=50, active_start_hour=9, active_end_hour=22)
+        overridden = c.with_active_hours_override({"start_hour": 0, "end_hour": 24})
+        assert overridden.warmup_days == 14
+        assert overridden.initial_daily_budget == 50
+
 class TestPacingController:
     def _make(self, phase="warmup", day=0):
         mr = AsyncMock()
@@ -35,6 +62,20 @@ class TestPacingController:
     def test_active_hours_bool(self):
         ctrl, _ = self._make()
         assert isinstance(ctrl.is_active_hours, bool)
+
+    def test_active_hours_override_actually_changes_controller_behavior(self):
+        from unittest.mock import AsyncMock
+
+        mr = AsyncMock()
+        mr.hgetall = AsyncMock(return_value={})
+        mr.eval = AsyncMock(return_value=1)
+        # a 0-24 window is always active regardless of the real wall-clock
+        # hour — proves the per-account override actually reaches the
+        # controller, not just PacingConfig in isolation.
+        base = PacingConfig(warmup_days=14, initial_daily_budget=50, active_start_hour=9, active_end_hour=10)
+        overridden = base.with_active_hours_override({"start_hour": 0, "end_hour": 24})
+        ctrl = PacingController(redis_client=mr, account_id="test", config=overridden)
+        assert ctrl.is_active_hours is True
 
     def test_record_block(self):
         ctrl, _ = self._make()

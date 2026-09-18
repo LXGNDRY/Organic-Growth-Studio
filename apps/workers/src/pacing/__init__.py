@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal, Optional
 
@@ -32,6 +32,23 @@ class PacingConfig:
     timezone: str = "UTC"
     max_consecutive_blocks: int = 3
     block_cooldown_minutes: int = 60
+
+    def with_active_hours_override(self, active_hours: dict | None) -> PacingConfig:
+        """Applies a per-account schedule override — TargetingConfig.active_hours
+        (e.g. {"start_hour": 6, "end_hour": 20}) — onto this config's global
+        active_start_hour/active_end_hour defaults.
+
+        This field exists on the schema but had no consumer at all: every
+        account ran the same 9-22 UTC window regardless of what a tenant
+        configured. Missing/absent keys fall back to this config's own
+        values, and an empty or None override is a no-op — most accounts
+        won't set one.
+        """
+        if not active_hours:
+            return self
+        start = active_hours.get("start_hour", self.active_start_hour)
+        end = active_hours.get("end_hour", self.active_end_hour)
+        return replace(self, active_start_hour=start, active_end_hour=end)
 
     def daily_budget_for_day(self, warmup_day: int) -> int:
         if warmup_day <= 0: return self.initial_daily_budget

@@ -64,16 +64,17 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
     db = Database(settings.database_url)
     await db.create_all()
 
-    pacing = PacingController(
-        redis_client=redis_client,
-        account_id=account_id,
-        config=PacingConfig(
-            warmup_days=settings.default_warmup_days,
-            initial_daily_budget=settings.default_initial_actions,
-            max_consecutive_blocks=settings.max_consecutive_blocks,
-            block_cooldown_minutes=settings.block_cooldown_minutes,
-        ),
+    pacing_config = PacingConfig(
+        warmup_days=settings.default_warmup_days,
+        initial_daily_budget=settings.default_initial_actions,
+        max_consecutive_blocks=settings.max_consecutive_blocks,
+        block_cooldown_minutes=settings.block_cooldown_minutes,
     )
+    # TargetingConfig.active_hours is a per-account schedule override; apply
+    # it here so an account configured for a different window doesn't just
+    # silently run the global 9-22 UTC default.
+    pacing_config = pacing_config.with_active_hours_override(DEFAULT_TARGETING_CONFIG.get("active_hours"))
+    pacing = PacingController(redis_client=redis_client, account_id=account_id, config=pacing_config)
     proxy_manager = ProxyManager(provider=settings.proxy_provider)
     proxy_url = await proxy_manager.assign_proxy(account_id)
     executor = ActionExecutor(account_id=account_id, dry_run=not live, proxy_url=proxy_url)
