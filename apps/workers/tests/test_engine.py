@@ -133,10 +133,10 @@ class TestEngineWiring:
         pacing, mr = make_pacing()
 
         class ExplodingClient:
-            async def like(self, target_id, media_id):
+            async def like(self, target_id, media_id, proxy_url=None):
                 raise ConnectionError("boom")
 
-            async def follow(self, target_id, target_username):
+            async def follow(self, target_id, target_username, proxy_url=None):
                 raise ConnectionError("boom")
 
         executor = ActionExecutor(account_id="acct-e2e", client=ExplodingClient(), dry_run=False)

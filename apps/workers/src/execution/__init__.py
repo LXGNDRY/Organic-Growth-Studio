@@ -88,15 +88,21 @@ class InstagramClient:
     the engine must work correctly with *any* implementation of this
     interface, including a fully mocked one, which is what makes it safe to
     validate end-to-end before real credentials are involved.
+
+    `proxy_url` is part of the interface, not an afterthought: a real
+    implementation MUST route its request through it, since per-account
+    proxy assignment is a safety control (mixing IG traffic for multiple
+    accounts over one IP is exactly the pattern that gets accounts flagged
+    together). `ActionExecutor` passes its assigned proxy on every call.
     """
 
-    async def like(self, target_id: str, media_id: str) -> ExecutionResult:
+    async def like(self, target_id: str, media_id: str, proxy_url: str | None = None) -> ExecutionResult:
         raise NotImplementedError("wire a real Instagram transport before going live")
 
-    async def follow(self, target_id: str, target_username: str) -> ExecutionResult:
+    async def follow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         raise NotImplementedError("wire a real Instagram transport before going live")
 
-    async def unfollow(self, target_id: str, target_username: str) -> ExecutionResult:
+    async def unfollow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         raise NotImplementedError("wire a real Instagram transport before going live")
 
 
@@ -107,13 +113,13 @@ class SimulatedInstagramClient(InstagramClient):
         self.success_rate = success_rate
         self._rng = seed or random.Random()
 
-    async def like(self, target_id: str, media_id: str) -> ExecutionResult:
+    async def like(self, target_id: str, media_id: str, proxy_url: str | None = None) -> ExecutionResult:
         return self._simulate(ActionType.LIKE)
 
-    async def follow(self, target_id: str, target_username: str) -> ExecutionResult:
+    async def follow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         return self._simulate(ActionType.FOLLOW)
 
-    async def unfollow(self, target_id: str, target_username: str) -> ExecutionResult:
+    async def unfollow(self, target_id: str, target_username: str, proxy_url: str | None = None) -> ExecutionResult:
         return self._simulate(ActionType.UNFOLLOW)
 
     def _simulate(self, action: ActionType) -> ExecutionResult:
@@ -167,17 +173,17 @@ class ActionExecutor:
         return self._sim_client if self.dry_run else self._live_client  # type: ignore[return-value]
 
     async def like(self, target_id: str, media_id: str) -> ExecutionResult:
-        result = await self._client.like(target_id, media_id)
+        result = await self._client.like(target_id, media_id, proxy_url=self.proxy_url)
         result.dry_run = self.dry_run
         return result
 
     async def follow(self, target_id: str, target_username: str) -> ExecutionResult:
-        result = await self._client.follow(target_id, target_username)
+        result = await self._client.follow(target_id, target_username, proxy_url=self.proxy_url)
         result.dry_run = self.dry_run
         return result
 
     async def unfollow(self, target_id: str, target_username: str) -> ExecutionResult:
-        result = await self._client.unfollow(target_id, target_username)
+        result = await self._client.unfollow(target_id, target_username, proxy_url=self.proxy_url)
         result.dry_run = self.dry_run
         return result
 

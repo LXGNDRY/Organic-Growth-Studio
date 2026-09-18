@@ -22,7 +22,7 @@ class TestDryRunSafety:
     @pytest.mark.asyncio
     async def test_dry_run_never_touches_the_live_client(self):
         class ExplodingClient(InstagramClient):
-            async def like(self, target_id, media_id):
+            async def like(self, target_id, media_id, proxy_url=None):
                 raise AssertionError("dry-run must not call the live client")
 
         ex = ActionExecutor(account_id="a1", client=ExplodingClient(), dry_run=True)
@@ -34,7 +34,7 @@ class TestDryRunSafety:
         calls = []
 
         class RecordingClient(InstagramClient):
-            async def like(self, target_id, media_id):
+            async def like(self, target_id, media_id, proxy_url=None):
                 calls.append((target_id, media_id))
                 return ExecutionResult(success=True, status=ActionStatus.COMPLETED, http_status=200)
 
@@ -100,3 +100,28 @@ class TestActionExecutorProxyWiring:
     def test_redacted_proxy_is_none_when_no_proxy_assigned(self):
         ex = ActionExecutor(account_id="a1")
         assert ex.redacted_proxy is None
+
+    @pytest.mark.asyncio
+    async def test_assigned_proxy_is_actually_passed_to_the_live_client(self):
+        seen = {}
+
+        class RecordingClient(InstagramClient):
+            async def like(self, target_id, media_id, proxy_url=None):
+                seen["like"] = proxy_url
+                return ExecutionResult(success=True, status=ActionStatus.COMPLETED, http_status=200)
+
+            async def follow(self, target_id, target_username, proxy_url=None):
+                seen["follow"] = proxy_url
+                return ExecutionResult(success=True, status=ActionStatus.COMPLETED, http_status=200)
+
+            async def unfollow(self, target_id, target_username, proxy_url=None):
+                seen["unfollow"] = proxy_url
+                return ExecutionResult(success=True, status=ActionStatus.COMPLETED, http_status=200)
+
+        proxy = "http://a1:hunter2@proxy.example.com:8080"
+        ex = ActionExecutor(account_id="a1", client=RecordingClient(), dry_run=False, proxy_url=proxy)
+        await ex.like("t1", "m1")
+        await ex.follow("t1", "u1")
+        await ex.unfollow("t1", "u1")
+
+        assert seen == {"like": proxy, "follow": proxy, "unfollow": proxy}

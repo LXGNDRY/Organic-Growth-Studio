@@ -93,11 +93,11 @@ async def test_failed_actions_also_write_an_audit_entry(db):
     pacing = make_pacing()
 
     class AlwaysFailClient:
-        async def like(self, target_id, media_id):
+        async def like(self, target_id, media_id, proxy_url=None):
             from src.execution import ActionStatus, ExecutionResult
             return ExecutionResult(success=False, status=ActionStatus.RATE_LIMITED, http_status=429, error_code="rate_limited", dry_run=True)
 
-        async def follow(self, target_id, target_username):
+        async def follow(self, target_id, target_username, proxy_url=None):
             return await self.like(target_id, target_username)
 
     executor = ActionExecutor(account_id="acct-db2", client=AlwaysFailClient(), dry_run=False)
