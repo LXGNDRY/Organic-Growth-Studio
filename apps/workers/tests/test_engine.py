@@ -22,7 +22,7 @@ class AlwaysSucceedClient:
     async def _ok(self, *args, **kwargs):
         return ExecutionResult(success=True, status=ActionStatus.COMPLETED, http_status=200)
 
-    like = follow = unfollow = _ok
+    like = follow = unfollow = story_view = comment = _ok
 
 
 def make_account(username: str, followers: int, following: int, posts: int, private: bool = False) -> DiscoveredAccount:
@@ -233,17 +233,36 @@ class TestEngineWiring:
         assert len(delays) == len(cycle.executed) > 0
         assert all(d > 0 for d in delays)
 
-    async def test_unsupported_action_type_rejected_before_token_consumed(self):
+    async def test_unsupported_action_type_rejected_before_token_consumed(self, monkeypatch):
         candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
 
+        # All ActionType values are supported today — simulate a
+        # not-yet-implemented one to prove the rejection still happens
+        # before any token is consumed, rather than relying on an action
+        # type that is always excluded.
+        monkeypatch.setattr("src.engine.SUPPORTED_ACTION_TYPES", {ActionType.LIKE, ActionType.FOLLOW})
+
         with pytest.raises(NotImplementedError):
-            await engine._execute_one(engine._score(candidates[0]), ActionType.STORY_VIEW)
+            await engine._execute_one(engine._score(candidates[0]), ActionType.UNFOLLOW)
 
         # the Lua eval (token consumption) must never have been called
         mr.eval.assert_not_called()
+
+    async def test_story_view_and_comment_execute_end_to_end(self):
+        candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e", client=AlwaysSucceedClient(), dry_run=False)
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
+
+        cycle = await engine.run_cycle(
+            targeting_config={"min_followers": 0, "max_followers": 100000, "enabled_actions": ["story_view", "comment"]}
+        )
+
+        assert cycle.actions_attempted > 0
+        assert {e.action_type for e in cycle.executed} <= {"story_view", "comment"}
 
     async def test_transport_exception_is_recorded_not_raised(self):
         candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
@@ -375,7 +394,17 @@ class TestEnabledActionsGate:
 
         assert resolved == [ActionType.LIKE]
 
-    async def test_not_yet_supported_action_is_dropped_not_raised(self):
+    async def test_comment_is_a_supported_resolved_action(self):
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor)
+
+        resolved = engine._resolve_action_types({"enabled_actions": ["comment", "follow"]})
+
+        assert resolved == [ActionType.COMMENT, ActionType.FOLLOW]
+
+    async def test_not_yet_supported_action_is_dropped_not_raised(self, monkeypatch):
+        monkeypatch.setattr("src.engine.SUPPORTED_ACTION_TYPES", {ActionType.LIKE, ActionType.FOLLOW})
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         engine = EngagementEngine("acct-e2e", pacing, executor)

@@ -10,6 +10,7 @@ through the same `_execute_one`.
 from __future__ import annotations
 
 import asyncio
+import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -58,7 +59,15 @@ MIN_QUALITY_SCORE = 40
 
 # Actions the executor actually implements. Checked before a token is ever
 # consumed, so an unimplemented action type never silently burns budget.
-SUPPORTED_ACTION_TYPES = {ActionType.LIKE, ActionType.FOLLOW, ActionType.UNFOLLOW}
+SUPPORTED_ACTION_TYPES = {
+    ActionType.LIKE, ActionType.FOLLOW, ActionType.UNFOLLOW,
+    ActionType.STORY_VIEW, ActionType.COMMENT,
+}
+
+# Real comment authoring (drafting per-target text) is a separate, unbuilt
+# capability — this is a minimal, generic pool just so the comment action
+# type can actually execute rather than staying permanently inert.
+GENERIC_COMMENT_POOL = ("🔥🔥🔥", "Love this!", "Amazing 😍", "So good!")
 
 FeedbackSink = Callable[[ExecutedAction], Awaitable[None]]
 DelayFn = Callable[[float], Awaitable[None]]
@@ -129,8 +138,13 @@ class EngagementEngine:
                 result = await self.executor.like(target.account.instagram_id, media_id="latest")
             elif action_type == ActionType.FOLLOW:
                 result = await self.executor.follow(target.account.instagram_id, target.account.username)
-            else:  # ActionType.UNFOLLOW
+            elif action_type == ActionType.UNFOLLOW:
                 result = await self.executor.unfollow(target.account.instagram_id, target.account.username)
+            elif action_type == ActionType.STORY_VIEW:
+                result = await self.executor.story_view(target.account.instagram_id, story_id="latest")
+            else:  # ActionType.COMMENT
+                text = random.choice(GENERIC_COMMENT_POOL)
+                result = await self.executor.comment(target.account.instagram_id, media_id="latest", text=text)
         except Exception as exc:
             # A transport-level failure (timeout, connection error, ...) is
             # still an outcome that must be logged, not an exception that
@@ -165,9 +179,9 @@ class EngagementEngine:
         a tenant disabling e.g. "follow" had no way to actually stop it.
 
         Silently drops any enabled action this executor doesn't implement
-        yet (e.g. "comment") rather than raising: an unimplemented action
-        type is a known, deferred gap (see SUPPORTED_ACTION_TYPES), not a
-        misconfiguration that should crash the whole cycle.
+        (see SUPPORTED_ACTION_TYPES) rather than raising, since an
+        unrecognized or not-yet-supported name is a targeting
+        misconfiguration, not a reason to crash the whole cycle.
         """
         names = targeting_config.get("enabled_actions") or ["like", "follow"]
         resolved: list[ActionType] = []
