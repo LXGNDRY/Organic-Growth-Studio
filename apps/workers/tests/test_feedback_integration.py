@@ -138,14 +138,17 @@ async def test_pacing_snapshot_reflects_controller_state(db):
         assert snap.risk_score == pacing.risk_score()
 
 
-async def _insert_action(session, account_id, action_type, target_instagram_id, target_username, executed_at, success=True):
+async def _insert_action(
+    session, account_id, action_type, target_instagram_id, target_username, executed_at,
+    success=True, followed_back=None,
+):
     from src.execution import ActionStatus
 
     session.add(
         EngagementActionLog(
             account_id=account_id, target_instagram_id=target_instagram_id, target_username=target_username,
             action_type=action_type, status=ActionStatus.COMPLETED.value if success else ActionStatus.FAILED.value,
-            success=success, dry_run=True, executed_at=executed_at,
+            success=success, followed_back=followed_back, dry_run=True, executed_at=executed_at,
         )
     )
     await session.flush()
@@ -221,3 +224,47 @@ async def test_run_unfollow_cycle_persists_through_feedback_sink(db):
         ).scalars().all()
         assert len(rows) == 1
         assert rows[0].target_instagram_id == "ig_stale"
+
+
+@pytest.mark.asyncio
+async def test_find_stale_follows_excludes_targets_that_followed_back(db):
+    now = datetime.now(UTC)
+    async with db.session() as session:
+        await _insert_action(
+            session, "acct-fb", "follow", "ig_mutual", "mutual_user", now - timedelta(days=20), followed_back=True,
+        )
+        await _insert_action(
+            session, "acct-fb", "follow", "ig_oneway", "oneway_user", now - timedelta(days=20), followed_back=False,
+        )
+        await session.commit()
+
+    async with db.session() as session:
+        stale = await find_stale_follows(session, "acct-fb", unfollow_after_days=14, now=now)
+
+    assert stale == [("ig_oneway", "oneway_user")]
+
+
+@pytest.mark.asyncio
+async def test_find_stale_follows_judges_a_refollow_by_its_own_timestamp(db):
+    """A target unfollowed, then re-followed, must be judged against the
+    NEW follow — the old unfollow must not permanently exempt it, and once
+    the new follow itself goes stale it should surface again.
+    """
+    now = datetime.now(UTC)
+    async with db.session() as session:
+        # first follow -> unfollow, long ago
+        await _insert_action(session, "acct-refollow", "follow", "ig_x", "user_x", now - timedelta(days=40))
+        await _insert_action(session, "acct-refollow", "unfollow", "ig_x", "user_x", now - timedelta(days=35))
+        # re-followed recently: not stale yet
+        await _insert_action(session, "acct-refollow", "follow", "ig_x", "user_x", now - timedelta(days=2))
+        await session.commit()
+
+    async with db.session() as session:
+        stale_now = await find_stale_follows(session, "acct-refollow", unfollow_after_days=14, now=now)
+    assert stale_now == []
+
+    async with db.session() as session:
+        stale_later = await find_stale_follows(
+            session, "acct-refollow", unfollow_after_days=14, now=now + timedelta(days=20)
+        )
+    assert stale_later == [("ig_x", "user_x")]

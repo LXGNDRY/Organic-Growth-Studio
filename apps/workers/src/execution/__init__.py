@@ -109,8 +109,14 @@ class InstagramClient:
 class SimulatedInstagramClient(InstagramClient):
     """Deterministic-ish fake transport used for dry-run mode and tests."""
 
-    def __init__(self, success_rate: float = 0.95, seed: random.Random | None = None):
+    def __init__(self, success_rate: float = 0.95, follow_back_rate: float = 0.2, seed: random.Random | None = None):
         self.success_rate = success_rate
+        # A follow's follow-back status isn't knowable at the instant it's
+        # sent — real Instagram would surface this asynchronously, later,
+        # as the target follows back or doesn't. This simulates that same
+        # eventual signal so find_stale_follows has something real to
+        # filter on in dry-run, rather than a field nothing ever sets.
+        self.follow_back_rate = follow_back_rate
         self._rng = seed or random.Random()
 
     async def like(self, target_id: str, media_id: str, proxy_url: str | None = None) -> ExecutionResult:
@@ -127,9 +133,11 @@ class SimulatedInstagramClient(InstagramClient):
         success = self._rng.random() < self.success_rate
         dur = int((time.time() - start) * 1000)
         if success:
+            followed_back = self._rng.random() < self.follow_back_rate if action == ActionType.FOLLOW else None
             return ExecutionResult(
                 success=True, status=ActionStatus.COMPLETED, http_status=200,
                 duration_ms=dur, executed_at=datetime.now(UTC), dry_run=True,
+                followed_back=followed_back,
             )
         fault = self._rng.choice(["rate_limit", "network", "unknown"])
         if fault == "rate_limit":
