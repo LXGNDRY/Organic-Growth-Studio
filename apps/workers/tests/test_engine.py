@@ -87,10 +87,39 @@ class TestTargetingConfigReachesTheEngine:
         assert cycle.scored == 0
         assert cycle.actions_attempted == 0
 
+    async def test_max_following_excludes_the_candidate_end_to_end(self):
+        candidates = [make_account("massfollower", followers=5000, following=999999, posts=120)]
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
+
+        cycle = await engine.run_cycle(
+            targeting_config={"min_followers": 0, "max_followers": 100000, "max_following": 10000}
+        )
+
+        assert cycle.discovered == 0
+        assert cycle.actions_attempted == 0
+
+    async def test_min_posts_excludes_the_candidate_end_to_end(self):
+        candidates = [make_account("emptyprofile", followers=5000, following=800, posts=0)]
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
+
+        cycle = await engine.run_cycle(
+            targeting_config={"min_followers": 0, "max_followers": 100000, "min_posts": 3}
+        )
+
+        assert cycle.discovered == 0
+        assert cycle.actions_attempted == 0
+
 
 class TestEngineWiring:
     async def test_low_quality_targets_are_skipped_and_never_execute(self):
-        candidates = [make_account("bot1", followers=10, following=9000, posts=0, private=False)]
+        # posts=5 (not 0) so this clears the min_posts discovery filter and
+        # actually reaches scoring — the low follower/following ratio and
+        # tiny post count still score it low enough to hit MIN_QUALITY_SCORE.
+        candidates = [make_account("bot1", followers=10, following=9000, posts=5, private=False)]
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)

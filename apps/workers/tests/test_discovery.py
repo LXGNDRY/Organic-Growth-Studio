@@ -74,3 +74,32 @@ class TestFilterByCriteria:
             candidates, {"min_followers": 0, "max_followers": 100000, "blacklisted_usernames": ["blockme"]}
         )
         assert out == []
+
+    async def test_following_range_is_enforced(self):
+        service = TargetDiscoveryService()
+        candidates = [
+            make_account("low", following_count=5),
+            make_account("mid", following_count=500),
+            make_account("high", following_count=999999),
+        ]
+        out = await service.filter_by_criteria(
+            candidates, {"min_followers": 0, "max_followers": 100000, "min_following": 50, "max_following": 10000}
+        )
+        assert [c.username for c in out] == ["mid"]
+
+    async def test_min_posts_is_enforced(self):
+        service = TargetDiscoveryService()
+        candidates = [make_account("empty", post_count=0), make_account("active", post_count=50)]
+        out = await service.filter_by_criteria(
+            candidates, {"min_followers": 0, "max_followers": 100000, "min_posts": 3}
+        )
+        assert [c.username for c in out] == ["active"]
+
+    async def test_following_and_posts_filters_default_to_wide_open(self):
+        # Defaults (min_following=0, max_following=10000, min_posts=3) mirror
+        # TargetingConfig's own defaults — a candidate that matches those
+        # should pass through when the caller doesn't override them.
+        service = TargetDiscoveryService()
+        candidates = [make_account("typical", following_count=500, post_count=50)]
+        out = await service.filter_by_criteria(candidates, {"min_followers": 0, "max_followers": 100000})
+        assert [c.username for c in out] == ["typical"]
