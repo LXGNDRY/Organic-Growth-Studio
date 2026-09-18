@@ -50,6 +50,30 @@ class PacingConfig:
         end = active_hours.get("end_hour", self.active_end_hour)
         return replace(self, active_start_hour=start, active_end_hour=end)
 
+    def with_daily_limits_override(self, targeting_config: dict | None) -> PacingConfig:
+        """Applies TargetingConfig's per-account daily_*_limit fields onto
+        this config's global max_daily_* defaults.
+
+        Same "modeled, never wired" shape as active_hours before its fix:
+        TargetingConfig.daily_like_limit/daily_follow_limit/
+        daily_unfollow_limit/daily_story_view_limit/daily_comment_limit had
+        zero consumers in the worker — every account ran the same global
+        caps (300/150/150/500/50) regardless of what a tenant configured,
+        including a tenant explicitly setting daily_comment_limit=0 to
+        disable commenting. Missing keys fall back to this config's own
+        values; None/empty is a no-op.
+        """
+        if not targeting_config:
+            return self
+        return replace(
+            self,
+            max_daily_likes=targeting_config.get("daily_like_limit", self.max_daily_likes),
+            max_daily_follows=targeting_config.get("daily_follow_limit", self.max_daily_follows),
+            max_daily_unfollows=targeting_config.get("daily_unfollow_limit", self.max_daily_unfollows),
+            max_daily_story_views=targeting_config.get("daily_story_view_limit", self.max_daily_story_views),
+            max_daily_comments=targeting_config.get("daily_comment_limit", self.max_daily_comments),
+        )
+
     def daily_budget_for_day(self, warmup_day: int) -> int:
         if warmup_day <= 0: return self.initial_daily_budget
         max_total = self.max_daily_likes + self.max_daily_follows + self.max_daily_unfollows + self.max_daily_story_views + self.max_daily_comments

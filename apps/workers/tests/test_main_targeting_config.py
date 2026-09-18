@@ -29,6 +29,15 @@ FILTER_KEYS_SUPPORTED_BY_DISCOVERY = {
 # Keys `EngagementEngine._resolve_action_types` reads via `cfg.get(...)`.
 ACTION_KEYS_SUPPORTED_BY_ENGINE = {"enabled_actions"}
 
+# Keys `PacingConfig.with_daily_limits_override` reads via `cfg.get(...)`.
+DAILY_LIMIT_KEYS_SUPPORTED_BY_PACING = {
+    "daily_like_limit",
+    "daily_follow_limit",
+    "daily_unfollow_limit",
+    "daily_story_view_limit",
+    "daily_comment_limit",
+}
+
 
 def test_default_targeting_config_covers_every_discovery_filter_key():
     missing = FILTER_KEYS_SUPPORTED_BY_DISCOVERY - DEFAULT_TARGETING_CONFIG.keys()
@@ -38,6 +47,11 @@ def test_default_targeting_config_covers_every_discovery_filter_key():
 def test_default_targeting_config_covers_every_engine_action_key():
     missing = ACTION_KEYS_SUPPORTED_BY_ENGINE - DEFAULT_TARGETING_CONFIG.keys()
     assert not missing, f"DEFAULT_TARGETING_CONFIG is missing action-gating keys: {missing}"
+
+
+def test_default_targeting_config_covers_every_daily_limit_key():
+    missing = DAILY_LIMIT_KEYS_SUPPORTED_BY_PACING - DEFAULT_TARGETING_CONFIG.keys()
+    assert not missing, f"DEFAULT_TARGETING_CONFIG is missing daily-limit keys: {missing}"
 
 
 def test_default_targeting_config_matches_api_model_defaults():
@@ -54,3 +68,8 @@ def test_default_targeting_config_matches_api_model_defaults():
     assert DEFAULT_TARGETING_CONFIG["follow_back_ratio_max"] == 5.0
     assert DEFAULT_TARGETING_CONFIG["gender"] == "any"
     assert DEFAULT_TARGETING_CONFIG["languages"] == []
+    assert DEFAULT_TARGETING_CONFIG["daily_like_limit"] == 200
+    assert DEFAULT_TARGETING_CONFIG["daily_follow_limit"] == 100
+    assert DEFAULT_TARGETING_CONFIG["daily_unfollow_limit"] == 100
+    assert DEFAULT_TARGETING_CONFIG["daily_story_view_limit"] == 500
+    assert DEFAULT_TARGETING_CONFIG["daily_comment_limit"] == 0
