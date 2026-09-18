@@ -37,6 +37,7 @@ class EngagementActionLog(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     account_id: Mapped[str] = mapped_column(String(100), index=True)
+    target_instagram_id: Mapped[str] = mapped_column(String(100), default="")
     target_username: Mapped[str] = mapped_column(String(100))
     action_type: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20))

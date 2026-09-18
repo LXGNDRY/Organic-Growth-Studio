@@ -196,3 +196,61 @@ class TestEngineWiring:
 
         assert len(seen) == len(cycle.executed)
         assert len(seen) > 0
+
+
+class TestUnfollowCycle:
+    async def test_unfollows_every_stale_target_when_budget_allows(self):
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery([]), delay_fn=no_delay)
+
+        stale = [("ig_1", "user1"), ("ig_2", "user2"), ("ig_3", "user3")]
+        cycle = await engine.run_unfollow_cycle(stale)
+
+        assert cycle.actions_attempted == 3
+        assert len(cycle.executed) == 3
+        assert all(e.action_type == "unfollow" for e in cycle.executed)
+        assert {e.target_instagram_id for e in cycle.executed} == {"ig_1", "ig_2", "ig_3"}
+
+    async def test_unfollow_cycle_is_pacing_gated(self):
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery([]), delay_fn=no_delay)
+
+        # simulate an exhausted unfollow bucket: can_perform false after first
+        calls = {"n": 0}
+
+        async def can_perform_side_effect(action_type):
+            calls["n"] += 1
+            return calls["n"] <= 1
+
+        pacing.can_perform = can_perform_side_effect
+        stale = [("ig_1", "user1"), ("ig_2", "user2")]
+        cycle = await engine.run_unfollow_cycle(stale)
+
+        # the first target is allowed and attempted; the second is skipped
+        # by can_perform before an attempt is even counted.
+        assert cycle.actions_attempted == 1
+        assert len(cycle.executed) == 1
+
+    async def test_throttled_account_unfollows_nothing(self):
+        pacing, mr = make_pacing(max_consecutive_blocks=1)
+        pacing.record_block("hard")
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery([]), delay_fn=no_delay)
+
+        cycle = await engine.run_unfollow_cycle([("ig_1", "user1")])
+
+        assert cycle.throttled is True
+        assert cycle.executed == []
+
+    async def test_unfollow_cycle_never_bypasses_pacing_token(self):
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery([]), delay_fn=no_delay)
+
+        await engine.run_unfollow_cycle([("ig_1", "user1")])
+
+        # the Lua eval (token consumption) must have been invoked — same
+        # enforcement point as run_cycle, not a separate ungated path.
+        mr.eval.assert_called()
