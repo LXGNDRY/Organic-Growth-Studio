@@ -51,6 +51,11 @@ DEFAULT_TARGETING_CONFIG = {
     "enabled_actions": ["like", "follow"],
     "gender": "any",
     "languages": [],
+    "daily_like_limit": 200,
+    "daily_follow_limit": 100,
+    "daily_unfollow_limit": 100,
+    "daily_story_view_limit": 500,
+    "daily_comment_limit": 0,
 }
 
 # Matches TargetingConfig.unfollow_after_days' default. Not part of
@@ -78,6 +83,7 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
     # it here so an account configured for a different window doesn't just
     # silently run the global 9-22 UTC default.
     pacing_config = pacing_config.with_active_hours_override(DEFAULT_TARGETING_CONFIG.get("active_hours"))
+    pacing_config = pacing_config.with_daily_limits_override(DEFAULT_TARGETING_CONFIG)
     pacing = PacingController(redis_client=redis_client, account_id=account_id, config=pacing_config)
     proxy_manager = ProxyManager(provider=settings.proxy_provider)
     proxy_url = await proxy_manager.assign_proxy(account_id)

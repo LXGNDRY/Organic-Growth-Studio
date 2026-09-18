@@ -44,6 +44,49 @@ class TestActiveHoursOverride:
         assert overridden.warmup_days == 14
         assert overridden.initial_daily_budget == 50
 
+
+class TestDailyLimitsOverride:
+    def test_none_or_empty_override_is_a_noop(self):
+        c = PacingConfig(max_daily_likes=300, max_daily_follows=150)
+        assert c.with_daily_limits_override(None) is c
+        assert c.with_daily_limits_override({}) is c
+
+    def test_full_override_replaces_all_five_limits(self):
+        c = PacingConfig(
+            max_daily_likes=300, max_daily_follows=150, max_daily_unfollows=150,
+            max_daily_story_views=500, max_daily_comments=50,
+        )
+        overridden = c.with_daily_limits_override({
+            "daily_like_limit": 200, "daily_follow_limit": 100, "daily_unfollow_limit": 100,
+            "daily_story_view_limit": 400, "daily_comment_limit": 0,
+        })
+        assert overridden.max_daily_likes == 200
+        assert overridden.max_daily_follows == 100
+        assert overridden.max_daily_unfollows == 100
+        assert overridden.max_daily_story_views == 400
+        assert overridden.max_daily_comments == 0
+        # original config is untouched — a per-account copy, not a mutation
+        assert c.max_daily_likes == 300
+
+    def test_partial_override_keeps_other_limits(self):
+        c = PacingConfig(max_daily_likes=300, max_daily_follows=150)
+        overridden = c.with_daily_limits_override({"daily_like_limit": 50})
+        assert overridden.max_daily_likes == 50
+        assert overridden.max_daily_follows == 150
+
+    def test_zero_is_a_real_override_not_treated_as_missing(self):
+        # daily_comment_limit=0 (TargetingConfig's own default) means
+        # "disable commenting" — must not be confused with "not provided".
+        c = PacingConfig(max_daily_comments=50)
+        overridden = c.with_daily_limits_override({"daily_comment_limit": 0})
+        assert overridden.max_daily_comments == 0
+
+    def test_override_does_not_affect_unrelated_fields(self):
+        c = PacingConfig(warmup_days=14, active_start_hour=9, max_daily_likes=300)
+        overridden = c.with_daily_limits_override({"daily_like_limit": 50})
+        assert overridden.warmup_days == 14
+        assert overridden.active_start_hour == 9
+
 class TestPacingController:
     def _make(self, phase="warmup", day=0):
         mr = AsyncMock()
