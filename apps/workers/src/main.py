@@ -43,6 +43,7 @@ DEFAULT_TARGETING_CONFIG = {
     "skip_private_accounts": True,
     "skip_business_accounts": False,
     "blacklisted_usernames": [],
+    "enabled_actions": ["like", "follow"],
 }
 
 # Matches TargetingConfig.unfollow_after_days' default. Not part of

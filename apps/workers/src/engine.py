@@ -158,13 +158,38 @@ class EngagementEngine:
 
         return result
 
+    def _resolve_action_types(self, targeting_config: dict) -> list[ActionType]:
+        """Derives which actions a cycle may perform from the targeting
+        config's `enabled_actions` — TargetingConfig models this
+        (default `["like", "follow"]`) but nothing previously read it, so
+        a tenant disabling e.g. "follow" had no way to actually stop it.
+
+        Silently drops any enabled action this executor doesn't implement
+        yet (e.g. "comment") rather than raising: an unimplemented action
+        type is a known, deferred gap (see SUPPORTED_ACTION_TYPES), not a
+        misconfiguration that should crash the whole cycle.
+        """
+        names = targeting_config.get("enabled_actions") or ["like", "follow"]
+        resolved: list[ActionType] = []
+        for name in names:
+            try:
+                action_type = ActionType(name)
+            except ValueError:
+                logger.warning("engine.unknown_enabled_action", account_id=self.account_id, action=name)
+                continue
+            if action_type not in SUPPORTED_ACTION_TYPES:
+                logger.info("engine.enabled_action_not_yet_supported", account_id=self.account_id, action=name)
+                continue
+            resolved.append(action_type)
+        return resolved
+
     async def run_cycle(
         self,
         targeting_config: dict,
         action_types: list[ActionType] | None = None,
         max_candidates: int = 100,
     ) -> CycleResult:
-        action_types = action_types or [ActionType.LIKE, ActionType.FOLLOW]
+        action_types = action_types if action_types is not None else self._resolve_action_types(targeting_config)
         cycle = CycleResult(account_id=self.account_id)
 
         if self.pacing.is_throttled:
