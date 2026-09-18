@@ -22,6 +22,8 @@ FILTER_KEYS_SUPPORTED_BY_DISCOVERY = {
     "skip_private_accounts",
     "skip_business_accounts",
     "blacklisted_usernames",
+    "gender",
+    "languages",
 }
 
 # Keys `EngagementEngine._resolve_action_types` reads via `cfg.get(...)`.
@@ -50,3 +52,5 @@ def test_default_targeting_config_matches_api_model_defaults():
     assert DEFAULT_TARGETING_CONFIG["min_posts"] == 3
     assert DEFAULT_TARGETING_CONFIG["follow_back_ratio_min"] == 0.1
     assert DEFAULT_TARGETING_CONFIG["follow_back_ratio_max"] == 5.0
+    assert DEFAULT_TARGETING_CONFIG["gender"] == "any"
+    assert DEFAULT_TARGETING_CONFIG["languages"] == []

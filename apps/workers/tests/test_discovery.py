@@ -132,3 +132,51 @@ class TestFilterByCriteria:
         )
         # following_count=0 makes the ratio unevaluable, not a disqualifier
         assert [c.username for c in out] == ["nodata"]
+
+    async def test_gender_filter_excludes_mismatched_candidates(self):
+        service = TargetDiscoveryService()
+        candidates = [make_account("f1", gender="female"), make_account("m1", gender="male")]
+        out = await service.filter_by_criteria(candidates, {"min_followers": 0, "max_followers": 100000, "gender": "female"})
+        assert [c.username for c in out] == ["f1"]
+
+    async def test_gender_any_keeps_everyone(self):
+        service = TargetDiscoveryService()
+        candidates = [make_account("f1", gender="female"), make_account("m1", gender="male")]
+        out = await service.filter_by_criteria(candidates, {"min_followers": 0, "max_followers": 100000})
+        assert {c.username for c in out} == {"f1", "m1"}
+
+    async def test_gender_filter_skips_unknown_gender_rather_than_excluding(self):
+        service = TargetDiscoveryService()
+        candidates = [make_account("unknown_gender", gender=None)]
+        out = await service.filter_by_criteria(candidates, {"min_followers": 0, "max_followers": 100000, "gender": "female"})
+        assert [c.username for c in out] == ["unknown_gender"]
+
+    async def test_languages_filter_excludes_unlisted_languages(self):
+        service = TargetDiscoveryService()
+        candidates = [make_account("en1", language="en"), make_account("fr1", language="fr")]
+        out = await service.filter_by_criteria(
+            candidates, {"min_followers": 0, "max_followers": 100000, "languages": ["en", "es"]}
+        )
+        assert [c.username for c in out] == ["en1"]
+
+    async def test_languages_filter_is_case_insensitive(self):
+        service = TargetDiscoveryService()
+        candidates = [make_account("en1", language="EN")]
+        out = await service.filter_by_criteria(
+            candidates, {"min_followers": 0, "max_followers": 100000, "languages": ["en"]}
+        )
+        assert [c.username for c in out] == ["en1"]
+
+    async def test_empty_languages_list_keeps_everyone(self):
+        service = TargetDiscoveryService()
+        candidates = [make_account("en1", language="en"), make_account("fr1", language="fr")]
+        out = await service.filter_by_criteria(candidates, {"min_followers": 0, "max_followers": 100000})
+        assert {c.username for c in out} == {"en1", "fr1"}
+
+    async def test_languages_filter_skips_unknown_language_rather_than_excluding(self):
+        service = TargetDiscoveryService()
+        candidates = [make_account("unknown_lang", language=None)]
+        out = await service.filter_by_criteria(
+            candidates, {"min_followers": 0, "max_followers": 100000, "languages": ["en"]}
+        )
+        assert [c.username for c in out] == ["unknown_lang"]

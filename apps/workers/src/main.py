@@ -49,6 +49,8 @@ DEFAULT_TARGETING_CONFIG = {
     "skip_business_accounts": False,
     "blacklisted_usernames": [],
     "enabled_actions": ["like", "follow"],
+    "gender": "any",
+    "languages": [],
 }
 
 # Matches TargetingConfig.unfollow_after_days' default. Not part of
