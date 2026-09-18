@@ -60,7 +60,7 @@ async def test_engine_actions_are_persisted_to_postgres(db):
     candidates = [
         DiscoveredAccount(
             username="good1", instagram_id="ig_good1", source=TargetSource.HASHTAG_ENGAGERS,
-            source_ref="#test", follower_count=5000, following_count=800, post_count=120,
+            source_ref="#test", follower_count=5000, following_count=1200, post_count=120,
         )
     ]
     pacing = make_pacing()
@@ -88,7 +88,7 @@ async def test_failed_actions_also_write_an_audit_entry(db):
     candidates = [
         DiscoveredAccount(
             username="good1", instagram_id="ig_good1", source=TargetSource.HASHTAG_ENGAGERS,
-            source_ref="#test", follower_count=5000, following_count=800, post_count=120,
+            source_ref="#test", follower_count=5000, following_count=1200, post_count=120,
         )
     ]
     pacing = make_pacing()

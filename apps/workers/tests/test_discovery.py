@@ -31,7 +31,15 @@ class TestDiscoverInertByDefault:
 class TestFilterByCriteria:
     async def test_follower_range_is_enforced(self):
         service = TargetDiscoveryService()
-        candidates = [make_account("low", follower_count=10), make_account("mid", follower_count=5000), make_account("high", follower_count=999999)]
+        # following_count=1200 keeps "mid"'s follower/following ratio (≈4.17)
+        # within the default follow_back_ratio bounds (0.1-5.0), so this test
+        # isolates the follower-range check rather than also tripping the
+        # ratio filter.
+        candidates = [
+            make_account("low", follower_count=10),
+            make_account("mid", follower_count=5000, following_count=1200),
+            make_account("high", follower_count=999999),
+        ]
         out = await service.filter_by_criteria(candidates, {"min_followers": 100, "max_followers": 50000})
         assert [c.username for c in out] == ["mid"]
 
@@ -103,3 +111,24 @@ class TestFilterByCriteria:
         candidates = [make_account("typical", following_count=500, post_count=50)]
         out = await service.filter_by_criteria(candidates, {"min_followers": 0, "max_followers": 100000})
         assert [c.username for c in out] == ["typical"]
+
+    async def test_follow_back_ratio_bounds_are_enforced(self):
+        service = TargetDiscoveryService()
+        candidates = [
+            make_account("toolopsided", follower_count=10000, following_count=100),  # ratio 100, way above max
+            make_account("reasonable", follower_count=2000, following_count=500),  # ratio 4.0
+            make_account("desperate", follower_count=10, following_count=1000),  # ratio 0.01, below min
+        ]
+        out = await service.filter_by_criteria(
+            candidates, {"min_followers": 0, "max_followers": 100000, "follow_back_ratio_min": 0.1, "follow_back_ratio_max": 5.0}
+        )
+        assert [c.username for c in out] == ["reasonable"]
+
+    async def test_follow_back_ratio_skipped_when_following_count_unknown(self):
+        service = TargetDiscoveryService()
+        candidates = [make_account("nodata", following_count=0)]
+        out = await service.filter_by_criteria(
+            candidates, {"min_followers": 0, "max_followers": 100000, "follow_back_ratio_min": 0.1, "follow_back_ratio_max": 5.0}
+        )
+        # following_count=0 makes the ratio unevaluable, not a disqualifier
+        assert [c.username for c in out] == ["nodata"]

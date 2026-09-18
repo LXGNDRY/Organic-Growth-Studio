@@ -43,6 +43,8 @@ DEFAULT_TARGETING_CONFIG = {
     "min_following": 0,
     "max_following": 10000,
     "min_posts": 3,
+    "follow_back_ratio_min": 0.1,
+    "follow_back_ratio_max": 5.0,
     "skip_private_accounts": True,
     "skip_business_accounts": False,
     "blacklisted_usernames": [],

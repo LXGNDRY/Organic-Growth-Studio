@@ -56,7 +56,7 @@ def make_pacing(**overrides):
 
 class TestTargetingConfigReachesTheEngine:
     async def test_skip_business_accounts_excludes_the_candidate_end_to_end(self):
-        candidates = [make_account("biz1", followers=5000, following=800, posts=120)]
+        candidates = [make_account("biz1", followers=5000, following=1200, posts=120)]
         candidates[0].is_business = True
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
@@ -74,7 +74,7 @@ class TestTargetingConfigReachesTheEngine:
         assert cycle.actions_attempted == 0
 
     async def test_blacklisted_username_excludes_the_candidate_end_to_end(self):
-        candidates = [make_account("good1", followers=5000, following=800, posts=120)]
+        candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
@@ -101,7 +101,7 @@ class TestTargetingConfigReachesTheEngine:
         assert cycle.actions_attempted == 0
 
     async def test_min_posts_excludes_the_candidate_end_to_end(self):
-        candidates = [make_account("emptyprofile", followers=5000, following=800, posts=0)]
+        candidates = [make_account("emptyprofile", followers=5000, following=1200, posts=0)]
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
@@ -113,13 +113,28 @@ class TestTargetingConfigReachesTheEngine:
         assert cycle.discovered == 0
         assert cycle.actions_attempted == 0
 
+    async def test_follow_back_ratio_excludes_the_candidate_end_to_end(self):
+        candidates = [make_account("lopsided", followers=50000, following=100, posts=120)]  # ratio 500
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
+
+        cycle = await engine.run_cycle(
+            targeting_config={"min_followers": 0, "max_followers": 100000, "follow_back_ratio_max": 5.0}
+        )
+
+        assert cycle.discovered == 0
+        assert cycle.actions_attempted == 0
+
 
 class TestEngineWiring:
     async def test_low_quality_targets_are_skipped_and_never_execute(self):
-        # posts=5 (not 0) so this clears the min_posts discovery filter and
-        # actually reaches scoring — the low follower/following ratio and
-        # tiny post count still score it low enough to hit MIN_QUALITY_SCORE.
-        candidates = [make_account("bot1", followers=10, following=9000, posts=5, private=False)]
+        # posts=5 (not 0) and following=200 (not e.g. 9000) so this clears
+        # the min_posts and follow_back_ratio discovery filters and actually
+        # reaches scoring — the poor ratio, tiny post count, and young
+        # account age still score it low enough to hit MIN_QUALITY_SCORE.
+        candidates = [make_account("bot1", followers=50, following=200, posts=5, private=False)]
+        candidates[0].account_age_days = 10
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
@@ -131,7 +146,7 @@ class TestEngineWiring:
         assert cycle.actions_attempted == 0
 
     async def test_high_quality_target_gets_engaged(self):
-        candidates = [make_account("good1", followers=5000, following=800, posts=120)]
+        candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
@@ -142,7 +157,7 @@ class TestEngineWiring:
         assert len(cycle.executed) == cycle.actions_attempted
 
     async def test_throttled_account_runs_zero_actions(self):
-        candidates = [make_account("good1", followers=5000, following=800, posts=120)]
+        candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
         pacing, mr = make_pacing(max_consecutive_blocks=1)
         pacing.record_block("hard")
         assert pacing.is_throttled
@@ -156,7 +171,7 @@ class TestEngineWiring:
         assert cycle.executed == []
 
     async def test_exhausting_budget_stops_further_actions(self):
-        candidates = [make_account(f"acct{i}", followers=5000, following=800, posts=120) for i in range(20)]
+        candidates = [make_account(f"acct{i}", followers=5000, following=1200, posts=120) for i in range(20)]
         pacing, mr = make_pacing(initial_daily_budget=2)
         # deplete tokens deterministically via the mocked redis eval: allow exactly N, then deny
         calls = {"n": 0}
@@ -174,7 +189,7 @@ class TestEngineWiring:
         assert cycle.actions_completed + cycle.actions_blocked <= 2
 
     async def test_delay_fn_is_called_between_actions(self):
-        candidates = [make_account(f"acct{i}", followers=5000, following=800, posts=120) for i in range(3)]
+        candidates = [make_account(f"acct{i}", followers=5000, following=1200, posts=120) for i in range(3)]
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         delays = []
@@ -191,7 +206,7 @@ class TestEngineWiring:
         assert all(d > 0 for d in delays)
 
     async def test_unsupported_action_type_rejected_before_token_consumed(self):
-        candidates = [make_account("good1", followers=5000, following=800, posts=120)]
+        candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
@@ -203,7 +218,7 @@ class TestEngineWiring:
         mr.eval.assert_not_called()
 
     async def test_transport_exception_is_recorded_not_raised(self):
-        candidates = [make_account("good1", followers=5000, following=800, posts=120)]
+        candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
         pacing, mr = make_pacing()
 
         class ExplodingClient:
@@ -223,7 +238,7 @@ class TestEngineWiring:
         assert all(e.result.error_code == "transport_error" for e in cycle.executed)
 
     async def test_on_result_feedback_hook_is_called_for_every_execution(self):
-        candidates = [make_account("good1", followers=5000, following=800, posts=120)]
+        candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         seen = []
@@ -311,7 +326,7 @@ class TestEnabledActionsGate:
         assert resolved == [ActionType.LIKE, ActionType.FOLLOW]
 
     async def test_disabling_follow_actually_disables_it_end_to_end(self):
-        candidates = [make_account("good1", followers=5000, following=800, posts=120)]
+        candidates = [make_account("good1", followers=5000, following=1200, posts=120)]
         pacing, mr = make_pacing()
         executor = ActionExecutor(account_id="acct-e2e")
         engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
