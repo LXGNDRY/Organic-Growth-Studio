@@ -43,6 +43,40 @@ def make_pacing(**overrides):
     return PacingController(redis_client=mr, account_id="acct-e2e", config=cfg), mr
 
 
+class TestTargetingConfigReachesTheEngine:
+    async def test_skip_business_accounts_excludes_the_candidate_end_to_end(self):
+        candidates = [make_account("biz1", followers=5000, following=800, posts=120)]
+        candidates[0].is_business = True
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
+
+        cycle = await engine.run_cycle(
+            targeting_config={"min_followers": 0, "max_followers": 100000, "skip_business_accounts": True}
+        )
+
+        # filter_by_criteria runs before `discovered`/`scored` are counted,
+        # so a business account excluded by the targeting config never
+        # shows up in either — and certainly never gets acted on.
+        assert cycle.discovered == 0
+        assert cycle.scored == 0
+        assert cycle.actions_attempted == 0
+
+    async def test_blacklisted_username_excludes_the_candidate_end_to_end(self):
+        candidates = [make_account("good1", followers=5000, following=800, posts=120)]
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
+
+        cycle = await engine.run_cycle(
+            targeting_config={"min_followers": 0, "max_followers": 100000, "blacklisted_usernames": ["good1"]}
+        )
+
+        assert cycle.discovered == 0
+        assert cycle.scored == 0
+        assert cycle.actions_attempted == 0
+
+
 class TestEngineWiring:
     async def test_low_quality_targets_are_skipped_and_never_execute(self):
         candidates = [make_account("bot1", followers=10, following=9000, posts=0, private=False)]
