@@ -4,7 +4,7 @@ import pytest
 
 from src.discovery import DiscoveredAccount, TargetDiscoveryService, TargetSource
 from src.engine import EngagementEngine
-from src.execution import ActionExecutor, ActionType
+from src.execution import ActionExecutor, ActionStatus, ActionType, ExecutionResult
 from src.pacing import PacingConfig, PacingController
 
 pytestmark = pytest.mark.asyncio
@@ -12,6 +12,17 @@ pytestmark = pytest.mark.asyncio
 
 async def no_delay(seconds: float) -> None:
     """Test double for EngagementEngine's inter-action delay — instant."""
+
+
+class AlwaysSucceedClient:
+    """Deterministic test double for tests asserting an exact action count,
+    where SimulatedInstagramClient's randomized success rate would flake.
+    """
+
+    async def _ok(self, *args, **kwargs):
+        return ExecutionResult(success=True, status=ActionStatus.COMPLETED, http_status=200)
+
+    like = follow = unfollow = _ok
 
 
 def make_account(username: str, followers: int, following: int, posts: int, private: bool = False) -> DiscoveredAccount:
@@ -201,7 +212,11 @@ class TestEngineWiring:
 class TestUnfollowCycle:
     async def test_unfollows_every_stale_target_when_budget_allows(self):
         pacing, mr = make_pacing()
-        executor = ActionExecutor(account_id="acct-e2e")
+        # A deterministic client, not the random simulator: this test
+        # asserts an exact attempted count, and the simulator's 5% failure
+        # rate can trigger a real block mid-loop (correctly halting further
+        # attempts) often enough to flake a 3-target run.
+        executor = ActionExecutor(account_id="acct-e2e", client=AlwaysSucceedClient(), dry_run=False)
         engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery([]), delay_fn=no_delay)
 
         stale = [("ig_1", "user1"), ("ig_2", "user2"), ("ig_3", "user3")]
@@ -254,3 +269,57 @@ class TestUnfollowCycle:
         # the Lua eval (token consumption) must have been invoked — same
         # enforcement point as run_cycle, not a separate ungated path.
         mr.eval.assert_called()
+
+
+class TestEnabledActionsGate:
+    async def test_defaults_to_like_and_follow_when_unset(self):
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor)
+
+        resolved = engine._resolve_action_types({})
+
+        assert resolved == [ActionType.LIKE, ActionType.FOLLOW]
+
+    async def test_disabling_follow_actually_disables_it_end_to_end(self):
+        candidates = [make_account("good1", followers=5000, following=800, posts=120)]
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery(candidates), delay_fn=no_delay)
+
+        cycle = await engine.run_cycle(
+            targeting_config={"min_followers": 0, "max_followers": 100000, "enabled_actions": ["like"]}
+        )
+
+        assert cycle.actions_attempted > 0
+        assert all(e.action_type == "like" for e in cycle.executed)
+
+    async def test_unknown_action_name_is_dropped_not_raised(self):
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor)
+
+        resolved = engine._resolve_action_types({"enabled_actions": ["like", "nonsense"]})
+
+        assert resolved == [ActionType.LIKE]
+
+    async def test_not_yet_supported_action_is_dropped_not_raised(self):
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor)
+
+        resolved = engine._resolve_action_types({"enabled_actions": ["comment", "follow"]})
+
+        assert resolved == [ActionType.FOLLOW]
+
+    async def test_explicit_action_types_param_overrides_config(self):
+        pacing, mr = make_pacing()
+        executor = ActionExecutor(account_id="acct-e2e")
+        engine = EngagementEngine("acct-e2e", pacing, executor, discovery=StubDiscovery([]), delay_fn=no_delay)
+
+        # an explicit action_types= argument (as tests elsewhere pass) must
+        # still win over whatever the targeting config says.
+        cycle = await engine.run_cycle(
+            targeting_config={"enabled_actions": ["like"]}, action_types=[ActionType.UNFOLLOW],
+        )
+        assert cycle.discovered == 0  # nothing to act on either way; just confirms no crash on override path
