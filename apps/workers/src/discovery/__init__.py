@@ -76,6 +76,8 @@ class TargetDiscoveryService:
         min_following = cfg.get("min_following", 0)
         max_following = cfg.get("max_following", 10000)
         min_posts = cfg.get("min_posts", 3)
+        min_ratio = cfg.get("follow_back_ratio_min", 0.1)
+        max_ratio = cfg.get("follow_back_ratio_max", 5.0)
         skip_private = cfg.get("skip_private_accounts", True)
         skip_business = cfg.get("skip_business_accounts", False)
         # Case-insensitive: a targeting rule shouldn't fail to exclude an
@@ -88,6 +90,14 @@ class TargetDiscoveryService:
                 if c.following_count < min_following or c.following_count > max_following: continue
             if c.post_count is not None:
                 if c.post_count < min_posts: continue
+            # follower/following ratio, as a rough proxy for how likely this
+            # account is to follow back — an account following 50x more
+            # people than follow it is unlikely to reciprocate. Skipped
+            # (not excluded) when following_count is 0/unknown, since the
+            # ratio isn't evaluable rather than being a real disqualifier.
+            if c.follower_count is not None and c.following_count:
+                ratio = c.follower_count / c.following_count
+                if ratio < min_ratio or ratio > max_ratio: continue
             if skip_private and c.is_private: continue
             if skip_business and c.is_business: continue
             if c.username.lower() in blacklist: continue

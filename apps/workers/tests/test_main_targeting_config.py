@@ -17,6 +17,8 @@ FILTER_KEYS_SUPPORTED_BY_DISCOVERY = {
     "min_following",
     "max_following",
     "min_posts",
+    "follow_back_ratio_min",
+    "follow_back_ratio_max",
     "skip_private_accounts",
     "skip_business_accounts",
     "blacklisted_usernames",
@@ -46,3 +48,5 @@ def test_default_targeting_config_matches_api_model_defaults():
     assert DEFAULT_TARGETING_CONFIG["min_following"] == 0
     assert DEFAULT_TARGETING_CONFIG["max_following"] == 10000
     assert DEFAULT_TARGETING_CONFIG["min_posts"] == 3
+    assert DEFAULT_TARGETING_CONFIG["follow_back_ratio_min"] == 0.1
+    assert DEFAULT_TARGETING_CONFIG["follow_back_ratio_max"] == 5.0
