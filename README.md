@@ -34,6 +34,24 @@ transparent automation. It differentiates itself on three promises:
 
 ## Quick Start
 
+### One command (Docker)
+
+```bash
+cd infra/docker && docker-compose up --build
+```
+
+Starts Postgres, Redis, the API (`localhost:8000`), and the web app
+(`localhost:3000`), applying Alembic migrations automatically before the
+API starts (the `migrate` service). The engagement engine isn't a
+long-running service by design (see `apps/workers/README.md`) — run it ad
+hoc against the same stack:
+
+```bash
+docker-compose --profile workers run --rm workers demo_account_1 --cycles 5 --sleep 1
+```
+
+### Manual (no Docker for the app processes)
+
 ```bash
 pnpm install
 cd apps/api && cp .env.example .env && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
