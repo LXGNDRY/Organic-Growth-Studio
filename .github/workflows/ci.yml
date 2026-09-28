@@ -72,6 +72,9 @@ jobs:
       - run: ruff check app/
         continue-on-error: true
         working-directory: apps/api
+      - run: alembic upgrade head
+        working-directory: apps/api
+        env: { DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/instagro_test", DATABASE_URL_SYNC: "postgresql://postgres:postgres@localhost:5432/instagro_test", JWT_SECRET_KEY: "test-secret" }
       - run: pytest tests/ -v
         working-directory: apps/api
         env: { DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/instagro_test", DATABASE_URL_SYNC: "postgresql://postgres:postgres@localhost:5432/instagro_test", JWT_SECRET_KEY: "test-secret" }

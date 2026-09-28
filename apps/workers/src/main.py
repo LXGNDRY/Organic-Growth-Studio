@@ -26,17 +26,17 @@ from src.feedback import (
     record_pacing_snapshot,
 )
 from src.pacing import PacingConfig, PacingController
+from src.tenant_config import load_tenant_targeting_config
 
 logger = structlog.get_logger()
 
-# Mirrors the defaults on apps/api's TargetingConfig model. Loading a
-# tenant's actual persisted targeting config would mean reading from the
-# multi-tenant Postgres schema (TargetingConfig, keyed by a UUID
-# account_id tied to instagram_accounts) that hasn't been migrated yet and
-# belongs to the SaaS layer explicitly deferred until the core engine is
-# proven — see apps/workers/README.md. Until that wiring exists, every
-# filter `filter_by_criteria` supports still needs a key here or it's
-# silently never activated by the one real entrypoint.
+# Mirrors the defaults on apps/api's TargetingConfig model. Used whenever
+# `account_id` has no real, provisioned `targeting_configs` row to load
+# (see `load_tenant_targeting_config` in src/tenant_config.py) — a local
+# demo/dry-run account id, or a real account the SaaS layer hasn't
+# provisioned targeting for yet. Every filter `filter_by_criteria` supports
+# still needs a key here, or an account falling back to this dict can never
+# activate it.
 DEFAULT_TARGETING_CONFIG = {
     "min_followers": 100,
     "max_followers": 50000,
@@ -73,6 +73,19 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
     db = Database(settings.database_url)
     await db.create_all()
 
+    # Load the account's real, dashboard-configured TargetingConfig from
+    # the SaaS schema apps/api owns, if one has been provisioned for it —
+    # this is the only place a real tenant's config can enter the engine.
+    # An account_id that isn't a real UUID (e.g. a local demo/dry-run id)
+    # or that has no provisioned row yet falls back to
+    # DEFAULT_TARGETING_CONFIG unchanged, exactly as before this wiring.
+    tenant_config = await load_tenant_targeting_config(db.engine, account_id)
+    targeting_config = tenant_config if tenant_config is not None else DEFAULT_TARGETING_CONFIG
+    # DEFAULT_TARGETING_CONFIG has no "unfollow_after_days" key (it isn't a
+    # filter_by_criteria/pacing input), so .get falls back correctly for
+    # both a loaded tenant config and the static default.
+    unfollow_after_days = targeting_config.get("unfollow_after_days", DEFAULT_UNFOLLOW_AFTER_DAYS)
+
     pacing_config = PacingConfig(
         warmup_days=settings.default_warmup_days,
         initial_daily_budget=settings.default_initial_actions,
@@ -82,8 +95,8 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
     # TargetingConfig.active_hours is a per-account schedule override; apply
     # it here so an account configured for a different window doesn't just
     # silently run the global 9-22 UTC default.
-    pacing_config = pacing_config.with_active_hours_override(DEFAULT_TARGETING_CONFIG.get("active_hours"))
-    pacing_config = pacing_config.with_daily_limits_override(DEFAULT_TARGETING_CONFIG)
+    pacing_config = pacing_config.with_active_hours_override(targeting_config.get("active_hours"))
+    pacing_config = pacing_config.with_daily_limits_override(targeting_config)
     pacing = PacingController(redis_client=redis_client, account_id=account_id, config=pacing_config)
     proxy_manager = ProxyManager(provider=settings.proxy_provider)
     proxy_url = await proxy_manager.assign_proxy(account_id)
@@ -95,7 +108,7 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
 
     logger.info(
         "worker.starting", account_id=account_id, live=live, cycles=cycles,
-        proxy=executor.redacted_proxy,
+        proxy=executor.redacted_proxy, tenant_config_loaded=tenant_config is not None,
     )
 
     for i in range(cycles):
@@ -111,11 +124,11 @@ async def run(account_id: str, cycles: int, sleep_seconds: float, live: bool) ->
         async with db.session() as session:
             sink = make_feedback_sink(session, account_id)
             engine = EngagementEngine(account_id, pacing, executor, discovery=discovery, on_result=sink)
-            cycle = await engine.run_cycle(DEFAULT_TARGETING_CONFIG)
+            cycle = await engine.run_cycle(targeting_config)
 
             # The other half of follow/unfollow: accounts followed more
             # than unfollow_after_days ago that never followed back.
-            stale = await find_stale_follows(session, account_id, DEFAULT_UNFOLLOW_AFTER_DAYS)
+            stale = await find_stale_follows(session, account_id, unfollow_after_days)
             unfollow_cycle = await engine.run_unfollow_cycle(stale)
 
             await record_audit_event(
