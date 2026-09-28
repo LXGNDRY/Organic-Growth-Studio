@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   postgres:
     image: postgres:16-alpine
@@ -9,11 +8,69 @@ services:
     ports: ["5432:5432"]
     volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 10s, timeout: 5s, retries: 5 }
+
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
     volumes: [redis_data:/data]
     healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 10s, timeout: 5s, retries: 5 }
+
+  # One-shot: applies apps/api's Alembic migrations, then exits. `api`
+  # waits on it completing successfully before starting, so `docker-compose
+  # up` always starts against an up-to-date schema — no manual
+  # `alembic upgrade head` step required.
+  migrate:
+    build:
+      context: ../../apps/api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/instagro
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@postgres:5432/instagro
+      JWT_SECRET_KEY: change-me-in-production
+    command: alembic upgrade head
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    build:
+      context: ../../apps/api
+    ports: ["8000:8000"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/instagro
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@postgres:5432/instagro
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: change-me-in-production
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    ports: ["3000:3000"]
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+    depends_on: [api]
+
+  # Not a long-running service by design (see apps/workers/README.md): the
+  # engine runs a fixed number of cycles for one account_id and exits.
+  # `docker-compose up` does not start this automatically — run it ad hoc:
+  #   docker-compose run --rm workers demo_account_1 --cycles 5 --sleep 1
+  workers:
+    build:
+      context: ../../apps/workers
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/instagro
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@postgres:5432/instagro
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    profiles: ["workers"]
+
 volumes:
   postgres_data:
   redis_data:
