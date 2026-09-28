@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = "development"
     port: int = 8000
     log_level: str = "info"
-    database_url: str = Field(default="sqlite+aiosqlite:///./test.db", alias="DATABASE_URL")
-    database_url_sync: str = Field(default="sqlite:///./test.db", alias="DATABASE_URL_SYNC")
+    database_url: str = Field(alias="DATABASE_URL")
+    database_url_sync: str = Field(alias="DATABASE_URL_SYNC")
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"

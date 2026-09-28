@@ -63,6 +63,12 @@ pytest -q
   (`tests/test_feedback_integration.py`).
 - `python -m src.main <account> --cycles N` runs the full pipeline
   end-to-end in dry-run mode against real Redis + real Postgres.
+- An `account_id` that's a real UUID with a provisioned `targeting_configs`
+  row (written by apps/api, via `alembic upgrade head`) runs on that
+  tenant's real, dashboard-configured targeting rules — not the static
+  defaults (`src/tenant_config.py`, `tests/test_tenant_config.py`). A
+  non-UUID id (any local demo/dry-run name) or an unprovisioned account
+  still falls back to `DEFAULT_TARGETING_CONFIG` in `src/main.py`.
 
 ## What's deliberately not here yet
 
