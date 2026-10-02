@@ -26,11 +26,11 @@ Requires Node.js 20+ and pnpm 9.
 ~~~bash
 pnpm install
 cp apps/organic-growth-studio/.env.example apps/organic-growth-studio/.env.local
-# Set a private AUTOPILOT_TOKEN in .env.local.
+# Set separate random APP_ACCESS_TOKEN, SESSION_SECRET, and AUTOPILOT_TOKEN values in .env.local.
 pnpm dev
 ~~~
 
-`pnpm dev` serves the UI on port 3010. `pnpm personal` runs the bounded scheduler. `pnpm start` serves a production build.
+`pnpm dev` serves the UI on port 3010. `pnpm personal` runs the bounded scheduler and signs in to the private API. For a single-process production run, build first, then use `APP_MODE=production HOSTNAME=0.0.0.0 DATA_DIR=/path/to/persistent-data pnpm personal` behind HTTPS. Set `DATA_DIR` to a persistent volume. The JSON store and scheduler are not safe across replicas or concurrent app instances.
 
 ## Checks
 
@@ -38,7 +38,7 @@ Run `pnpm lint`, `pnpm typecheck`, `pnpm test:ci`, and `pnpm build` before submi
 
 ## Data and deployment
 
-The local JSON store supports one personal process; it is not safe for concurrent instances or public multi-user use. Do not commit local `data/`, `.env.local`, tokens, or build output. GitHub Actions builds the app but does not host its continuous scheduler. Public deployment requires authentication, durable storage, distributed job coordination, rate limits, monitoring, and operational controls.
+The JSON store and scheduler support one personal process; do not run multiple replicas. Private dashboard and API routes require owner authentication. Public event tracking accepts bounded aggregate events from the configured project domain, and short links remain public. Do not commit local `data/`, `.env.local`, tokens, or build output. GitHub Actions builds the app but does not host its continuous scheduler. Put production behind HTTPS, and keep a persistent volume mounted at `DATA_DIR`.
 
 ## Contribution workflow
 

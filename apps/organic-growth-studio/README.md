@@ -16,14 +16,16 @@ From the repository root:
 ~~~bash
 pnpm install
 cp apps/organic-growth-studio/.env.example apps/organic-growth-studio/.env.local
-# Set AUTOPILOT_TOKEN to a private random secret in .env.local.
+# Set separate random APP_ACCESS_TOKEN, SESSION_SECRET, and AUTOPILOT_TOKEN values in .env.local.
 pnpm dev
 ~~~
 
 The web app uses port 3010. In another terminal, `pnpm personal` runs the bounded local scheduler. Root commands are available for lint, typecheck, tests, and production build.
 
+Generate each secret with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. Private UI and API routes require owner sign-in; the personal runner signs in to call the private autopilot API. Set `DATA_DIR` to a persistent volume for production (default `./data`). For one-machine production mode, run `pnpm build` then `APP_MODE=production HOSTNAME=0.0.0.0 DATA_DIR=/path/to/persistent-data pnpm personal` behind HTTPS. Use one process; the JSON store and scheduler do not support replicas or concurrent writers. GitHub Actions is CI, not a persistent runtime host.
+
 ## Operating boundaries
 
 Publishing stays manual. The app does not create artificial visits, automate likes, follows, comments, messages, or reviews, modify target sites, or create ad campaigns. Excluded integrations remain excluded: Shopify product intelligence, Search Console, GA4 and Shopify funnel reporting, Merchant Center diagnostics, and Pinterest/TikTok publishing.
 
-The JSON store and scheduler are for one personal process. Do not expose the app publicly as-is: authentication, durable shared storage, distributed scheduling, quotas, monitoring, and security controls are needed first. GitHub Actions validates and builds the app; it does not host a persistent web service or scheduler.
+Publishing remains manual. Public event tracking accepts bounded aggregate events from the registered target domain; short-link redirects remain public. The JSON store and scheduler are for one personal process.

@@ -12,10 +12,11 @@ export type AgentRun={id:string;startedAt:string;finishedAt:string;projectsCheck
 export type AgentConfig={enabled:boolean;cadenceHours:number;nextRunAt:string|null;lastRunAt:string|null};
 type AgentEvent={id:string;projectId:string;signature:string;kind:string;title:string;createdAt:string};
 type State={projects:Project[];analyses:StoredAnalysis[];drafts:Draft[];links:TrackingLink[];events:EventRecord[];experiments:Experiment[];agentConfig:AgentConfig;agentEvents:AgentEvent[];agentRuns:AgentRun[]};
-const file=path.join(process.cwd(),'data','store.json');
+const dataDir=process.env.DATA_DIR?path.resolve(process.env.DATA_DIR):path.join(process.cwd(),'data');
+const file=path.join(dataDir,'store.json');
 let pending=Promise.resolve();
 async function read():Promise<State>{try{const s=JSON.parse(await fs.readFile(file,'utf8')) as Partial<State>;return{projects:(s.projects??[]).map(p=>({...p,ownershipAttestedAt:p.ownershipAttestedAt??null,allowedClaims:Array.isArray(p.allowedClaims)?p.allowedClaims:[]})),analyses:s.analyses??[],drafts:s.drafts??[],links:s.links??[],events:s.events??[],experiments:s.experiments??[],agentConfig:s.agentConfig??{enabled:true,cadenceHours:6,nextRunAt:null,lastRunAt:null},agentEvents:s.agentEvents??[],agentRuns:s.agentRuns??[]}}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return{projects:[],analyses:[],drafts:[],links:[],events:[],experiments:[],agentConfig:{enabled:true,cadenceHours:6,nextRunAt:null,lastRunAt:null},agentEvents:[],agentRuns:[]};throw e}}
-async function write(s:State){await fs.mkdir(path.dirname(file),{recursive:true});const temp=file+'.tmp';await fs.writeFile(temp,JSON.stringify(s,null,2),'utf8');await fs.rename(temp,file)}
+async function write(s:State){await fs.mkdir(path.dirname(file),{recursive:true,mode:0o700});const temp=file+'.'+randomUUID()+'.tmp';await fs.writeFile(temp,JSON.stringify(s,null,2),{encoding:'utf8',mode:0o600,flag:'wx'});await fs.rename(temp,file)}
 async function mutate<T>(fn:(s:State)=>T|Promise<T>):Promise<T>{let resolve!:()=>void;const previous=pending;pending=new Promise<void>(r=>resolve=r);await previous;try{const s=await read();const result=await fn(s);await write(s);return result}finally{resolve()}}
 export const store={
  async listProjects(){const s=await read();const counts=new Map<string,{analyses:number;drafts:number}>();for(const p of s.projects)counts.set(p.id,{analyses:0,drafts:0});for(const a of s.analyses){const c=counts.get(a.projectId);if(c)c.analyses++;}for(const d of s.drafts){const c=counts.get(d.projectId);if(c)c.drafts++;}return [...s.projects].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).map(p=>({...p,_count:counts.get(p.id)!}))},

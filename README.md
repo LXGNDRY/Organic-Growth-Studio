@@ -13,7 +13,7 @@ pnpm install
 cp apps/organic-growth-studio/.env.example apps/organic-growth-studio/.env.local
 ~~~
 
-Set a private `AUTOPILOT_TOKEN` in `.env.local`, then run:
+Set separate random values for `APP_ACCESS_TOKEN`, `SESSION_SECRET`, and `AUTOPILOT_TOKEN` in `.env.local`, then run:
 
 ~~~bash
 pnpm dev
@@ -24,6 +24,8 @@ pnpm dev
 ~~~bash
 pnpm personal
 ~~~
+
+Generate each secret with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. Keep secrets out of Git and rotate them if exposed. The app stores data under `DATA_DIR` (default `./data`); production use needs a persistent disk mounted there.
 
 ## Useful commands
 
@@ -46,4 +48,4 @@ The older Instagro services and workers in this repository are legacy code, outs
 
 ## Hosting
 
-GitHub Actions validates and builds the application; GitHub does not host its persistent scheduler. The current JSON store and scheduler are for a single personal process. Before exposing the app publicly, add authentication, durable storage, distributed scheduling, rate limits, monitoring, and deployment controls.
+Private UI and API routes require owner sign-in; the personal runner signs in for its bounded scheduler calls. Public routes are limited to health, short-link redirects, and bounded event tracking from the registered target domain. For a single-machine production run, build with `pnpm build`, then set `APP_MODE=production`, `HOSTNAME=0.0.0.0`, and `DATA_DIR` to a persistent volume before `pnpm personal`, behind HTTPS. Run one process only: the JSON store and scheduler do not coordinate across replicas. GitHub Actions validates and builds the app; it does not host a persistent web service or scheduler.
