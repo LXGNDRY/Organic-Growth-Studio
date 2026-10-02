@@ -1,25 +1,18 @@
 {
-  "name": "instagro",
+  "name": "organic-growth-studio-workspace",
   "private": true,
   "version": "0.1.0",
-  "description": "Enterprise-grade Instagram growth platform",
+  "description": "Personal organic discovery and distribution studio",
   "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev",
-    "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "test:ci": "turbo run test:ci",
-    "clean": "turbo run clean && rm -rf node_modules .turbo"
-  },
-  "devDependencies": {
-    "turbo": "^2.0.0",
-    "typescript": "^5.4.0",
-    "@types/node": "^20.11.0",
-    "eslint": "^8.57.0",
-    "prettier": "^3.2.0",
-    "vitest": "^1.3.0",
-    "@vitest/coverage-v8": "^1.3.0"
+    "dev": "pnpm --filter organic-growth-studio dev",
+    "start": "pnpm --filter organic-growth-studio start",
+    "personal": "pnpm --filter organic-growth-studio personal",
+    "build": "pnpm --filter organic-growth-studio build",
+    "lint": "pnpm --filter organic-growth-studio lint",
+    "typecheck": "pnpm --filter organic-growth-studio typecheck",
+    "test": "pnpm --filter organic-growth-studio test",
+    "test:ci": "pnpm --filter organic-growth-studio test:ci",
+    "clean": "pnpm --filter organic-growth-studio clean"
   },
   "engines": {
     "node": ">=20.0.0",

@@ -1,83 +1,49 @@
-# Instagro
+# Organic Growth Studio
 
-> Enterprise-grade Instagram growth platform.
-> Full transparency. Safety-first pacing. Real engaged audiences.
+Personal software for finding legitimate organic discovery opportunities, preparing channel specific drafts, and measuring tagged referrals.
 
-## Overview
+The Studio is the repository's primary application. It analyzes public pages and prepares reviewable work; it does not create fake visits or automate likes, follows, comments, messages, or reviews.
 
-Instagro is a SaaS platform for growing Instagram audiences through safe,
-transparent automation. It differentiates itself on three promises:
+## Start locally
 
-1. **Full transparency** — every action taken on a user's account is logged
-   and visible in the dashboard.
-2. **Safety-first pacing** — a dedicated pacing controller enforces realistic
-   human-behavior patterns, adaptive throttling, and mandatory warm-up periods.
-3. **Quality scoring** — every gained follower is scored for realness and
-   engagement.
-
-## Architecture
-
-```
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│   Web (Next) │──────│  API (FastAPI)│──────│ Workers      │
-│  Dashboard   │      │  Auth, CRUD   │      │ Pacing, Exec │
-│  Marketing   │      │  Billing      │      │ Discovery    │
-└──────┬───────┘      └──────┬───────┘      └──────┬───────┘
-       │                     │                     │
-       └─────────────────────┼─────────────────────┘
-                             │
-                 ┌───────────┴───────────┐
-                 │  PostgreSQL · Redis   │
-                 │  Kafka/NATS (bus)     │
-                 └───────────────────────┘
-```
-
-## Organic Growth Studio
-
-The personal Organic Growth Studio is isolated at apps/organic-growth-studio. It scans public target pages, prepares review-only content drafts, creates tagged links, and runs a bounded local scheduler. It does not connect to the Instagram engagement workers or automate likes, follows, comments, messages, or reviews.
-
-Start its local personal runner with:
+Use Node.js 20 or newer and pnpm 9:
 
 ~~~bash
+pnpm install
 cp apps/organic-growth-studio/.env.example apps/organic-growth-studio/.env.local
-pnpm --filter @instagro/organic-growth-studio personal
 ~~~
 
-This app remains a personal prototype. GitHub Actions checks and builds it, but does not host its long-running Next.js service. Do not expose it publicly until authentication, durable storage, rate limits, and deployment controls are added.
+Set a private `AUTOPILOT_TOKEN` in `.env.local`, then run:
 
-## Quick Start
+~~~bash
+pnpm dev
+~~~
 
-### One command (Docker)
+`pnpm dev` starts the web application on port 3010. To run the bounded personal scheduler alongside it:
 
-```bash
-cd infra/docker && docker-compose up --build
-```
+~~~bash
+pnpm personal
+~~~
 
-Starts Postgres, Redis, the API (`localhost:8000`), and the web app
-(`localhost:3000`), applying Alembic migrations automatically before the
-API starts (the `migrate` service). The engagement engine isn't a
-long-running service by design (see `apps/workers/README.md`) — run it ad
-hoc against the same stack:
+## Useful commands
 
-```bash
-docker-compose --profile workers run --rm workers demo_account_1 --cycles 5 --sleep 1
-```
+~~~bash
+pnpm lint
+pnpm typecheck
+pnpm test:ci
+pnpm build
+pnpm start
+~~~
 
-### Manual (no Docker for the app processes)
+## Scope
 
-```bash
-pnpm install
-cd apps/api && cp .env.example .env && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
-cd ../workers && cp .env.example .env && python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
-cd infra/docker && docker-compose up -d postgres redis
-cd ../../apps/api && alembic upgrade head
-uvicorn app.main:app --reload --port 8000
-# In another terminal:
-cd apps/web && pnpm dev
-```
+- Analyze public pages for technical, content, accessibility, canonical, JSON-LD, robots, sitemap, and feed signals.
+- Manage target projects, scans, review-only content drafts, tagged links, experiments, and first-party aggregate events.
+- Run bounded, concurrent scans and use recorded experiment outcomes to improve opportunity ranking.
+- Keep publishing manual. Integrations excluded from this build include Shopify product intelligence, Search Console, GA4 and Shopify funnel reporting, Merchant Center diagnostics, and Pinterest/TikTok publishing.
 
-`DATABASE_URL`/`DATABASE_URL_SYNC` are required (no silent sqlite fallback)
-so a missing `.env` fails fast instead of quietly running against a
-throwaway local file — see each app's `.env.example`.
+The older Instagro services and workers in this repository are legacy code, outside the active product. The Studio does not connect to or run them.
 
-Read `claude.md` for the full development handbook.
+## Hosting
+
+GitHub Actions validates and builds the application; GitHub does not host its persistent scheduler. The current JSON store and scheduler are for a single personal process. Before exposing the app publicly, add authentication, durable storage, distributed scheduling, rate limits, monitoring, and deployment controls.

@@ -1,5 +1,5 @@
 {
-  "name": "@instagro/organic-growth-studio",
+  "name": "organic-growth-studio",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:ci": "vitest run",
-    "clean": "rm -rf .next .next-dev data"
+    "clean": "rm -rf .next .next-dev"
   },
   "dependencies": {
     "jsdom": "^24.1.3",
