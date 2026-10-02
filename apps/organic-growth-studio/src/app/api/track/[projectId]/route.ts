@@ -1,0 +1,5 @@
+import {NextRequest,NextResponse} from 'next/server';
+import {store} from '@/lib/store';
+export const runtime='nodejs';
+export async function GET(_:NextRequest,{params}:{params:Promise<{projectId:string}>}){const {projectId}=await params;if(!await store.getProject(projectId))return new NextResponse('/* Unknown project */',{status:404,headers:{'content-type':'application/javascript'}});const js=`(()=>{const endpoint=${JSON.stringify(`/api/projects/${projectId}/events`)};const q=new URLSearchParams(location.search);const send=(event)=>{const data=new URLSearchParams({event,path:location.pathname,source:q.get('utm_source')||'',medium:q.get('utm_medium')||'',campaign:q.get('utm_campaign')||''});navigator.sendBeacon(endpoint,data)};send('page_view');document.addEventListener('click',e=>{const el=e.target.closest('[data-signal-event]');if(el){const name=el.getAttribute('data-signal-event');if(['product_interest','add_to_cart','checkout_start','purchase'].includes(name))send(name)}},{capture:true});})();`;
+return new NextResponse(js,{headers:{'content-type':'application/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'}});}

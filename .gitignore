@@ -2,6 +2,7 @@ node_modules/
 .pnp
 .turbo/
 .next/
+.next-dev/
 dist/
 build/
 coverage/

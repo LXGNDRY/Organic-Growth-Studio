@@ -34,6 +34,21 @@ jobs:
       - run: pnpm --filter @instagro/web run build
         env: { NEXT_PUBLIC_API_URL: "http://localhost:8000/api/v1" }
 
+  typescript-organic-growth-studio:
+    name: Organic Growth Studio
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "pnpm" }
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm --filter @instagro/organic-growth-studio run lint
+      - run: pnpm --filter @instagro/organic-growth-studio run typecheck
+      - run: pnpm --filter @instagro/organic-growth-studio run test:ci
+      - run: pnpm --filter @instagro/organic-growth-studio run build
+
   python-workers:
     name: Python Workers
     runs-on: ubuntu-latest

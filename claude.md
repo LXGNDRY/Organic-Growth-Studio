@@ -54,6 +54,11 @@ Instagro/
 │       ├── tsconfig.base.json
 │       └── package.json
 ├── apps/
+│   ├── organic-growth-studio/ # Isolated personal organic discovery app
+│   │   ├── src/
+│   │   ├── scripts/
+│   │   ├── package.json
+│   │   └── README.md
 │   ├── web/                  # Next.js App Router — marketing + dashboard
 │   │   ├── src/
 │   │   │   ├── app/          # App Router routes

@@ -32,6 +32,19 @@ transparent automation. It differentiates itself on three promises:
                  └───────────────────────┘
 ```
 
+## Organic Growth Studio
+
+The personal Organic Growth Studio is isolated at apps/organic-growth-studio. It scans public target pages, prepares review-only content drafts, creates tagged links, and runs a bounded local scheduler. It does not connect to the Instagram engagement workers or automate likes, follows, comments, messages, or reviews.
+
+Start its local personal runner with:
+
+~~~bash
+cp apps/organic-growth-studio/.env.example apps/organic-growth-studio/.env.local
+pnpm --filter @instagro/organic-growth-studio personal
+~~~
+
+This app remains a personal prototype. GitHub Actions checks and builds it, but does not host its long-running Next.js service. Do not expose it publicly until authentication, durable storage, rate limits, and deployment controls are added.
+
 ## Quick Start
 
 ### One command (Docker)
