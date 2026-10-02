@@ -34,7 +34,7 @@ pnpm dev
 
 ## Checks
 
-Run `pnpm lint`, `pnpm typecheck`, `pnpm test:ci`, and `pnpm build` before submitting. GitHub Actions runs these same checks on pull requests to `main`.
+Run `pnpm lint`, `pnpm typecheck`, `pnpm test:ci`, and `pnpm build` before submitting. GitHub Actions runs these checks on pushes and pull requests across branches.
 
 ## Data and deployment
 
@@ -42,4 +42,4 @@ The local JSON store supports one personal process; it is not safe for concurren
 
 ## Contribution workflow
 
-Use a feature branch and a conventional commit. Open a pull request to `main`; do not force-push or push directly to `main`. Keep CI green and request review before merge.
+Use a short-lived feature branch and a conventional commit. Open a pull request against the repository's currently configured default branch; do not assume it is named `main`, and do not push directly to or force-push the default branch. Keep CI green and request review before merge. The repository owner may rename or remove legacy branches; use GitHub's default-branch setting as the source of truth.
