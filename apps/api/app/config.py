@@ -1,7 +1,10 @@
 from functools import lru_cache
 from typing import Literal
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+MIN_JWT_SECRET_LENGTH = 32
+INSECURE_JWT_SECRETS = {"change-me", "change-me-in-production"}
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -26,6 +29,18 @@ class Settings(BaseSettings):
     stripe_price_scale: str = ""
     stripe_price_agency: str = ""
     sentry_dsn: str | None = None
+
+    @model_validator(mode="after")
+    def reject_insecure_jwt_secret(self) -> "Settings":
+        # Fail fast: staging/production must never boot with a forgeable signing key.
+        key = self.jwt_secret_key
+        weak = key in INSECURE_JWT_SECRETS or len(key) < MIN_JWT_SECRET_LENGTH
+        if self.environment != "development" and weak:
+            raise ValueError(
+                f"JWT_SECRET_KEY must be unique and at least {MIN_JWT_SECRET_LENGTH} "
+                f"characters when ENVIRONMENT={self.environment}"
+            )
+        return self
 
     @property
     def is_development(self) -> bool:
