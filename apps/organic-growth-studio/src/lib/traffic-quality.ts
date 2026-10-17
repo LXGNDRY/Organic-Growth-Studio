@@ -37,6 +37,13 @@ const PAID_CLICK_PARAMS=['gclid','gbraid','wbraid','dclid','msclkid','ttclid','t
 // rather than being guessed at here.
 const AD_NETWORKS=new Set(['googlesyndication','syndicatedsearch','taboola','taboolanews','outbrain','mgid','revcontent']);
 
+// Organic is an allow-list, never a fall-through. An earlier revision ended
+// with `return organic` for anything it had not already matched, so a session
+// Shopify reported as source "unknown" with no referrer name - the exact
+// traffic this module exists to quarantine - came back learnable. Unrecognised
+// sources must fail closed.
+const ORGANIC_SOURCES=new Set(['search','social','referral']);
+
 function hostOf(url:string):string|null{
  try{const u=new URL(url);if(!['http:','https:'].includes(u.protocol))return null;return u.hostname.toLowerCase().replace(/^\[|\]$/g,'');}catch{return null;}
 }
@@ -77,10 +84,11 @@ export function classifySession(row:SessionRow):TrafficClass{
  if(paid)return decide('paid-click',`purchased click parameter ${paid}`);
 
  if(AD_NETWORKS.has(name))return decide('ad-network',`known ad network ${name}`);
- if(source==='unknown'&&name)return decide('unverified-referral',`unclassified referrer ${name}`);
- if(source==='direct'||(!source&&!name))return decide('unattributed','no referrer to credit');
+ if(ORGANIC_SOURCES.has(source))return decide('organic',`referrer source ${source}`);
+ if(source==='unknown')return decide('unverified-referral',name?`unclassified referrer ${name}`:'unclassified referrer source');
+ if(source&&source!=='direct')return decide('unverified-referral',`unrecognised referrer source ${source}`);
 
- return decide('organic',`referrer source ${source}`);
+ return decide('unattributed','no referrer to credit');
 }
 
 export type TrafficReport={

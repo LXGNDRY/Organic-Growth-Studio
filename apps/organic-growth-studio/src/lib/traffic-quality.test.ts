@@ -100,6 +100,28 @@ describe('classifySession', () => {
     expect(cls.learnable).toBe(false);
   });
 
+  it('quarantines an unknown source even when no referrer name was selected', () => {
+    // Regression: the classifier used to end with `return organic` for
+    // anything unmatched, so an audit grouped by referrer_source alone - a
+    // grouping scripts/traffic-audit.mjs accepts - sent every "unknown"
+    // session into the model as learnable organic traffic.
+    const cls = classifySession({
+      landingPageUrl: 'https://legendary-branding.com/',
+      referrerSource: 'unknown',
+      referrerName: null,
+    });
+    expect(cls.verdict).toBe('unverified-referral');
+    expect(cls.learnable).toBe(false);
+  });
+
+  it('fails closed on a referrer source it does not recognise', () => {
+    const cls = classifySession({
+      landingPageUrl: 'https://legendary-branding.com/',
+      referrerSource: 'some-future-shopify-source',
+    });
+    expect(cls.learnable).toBe(false);
+  });
+
   it('does not crash on the blank landing page Shopify emits', () => {
     expect(classifySession({ landingPageUrl: '' }).verdict).toBe('unattributed');
   });

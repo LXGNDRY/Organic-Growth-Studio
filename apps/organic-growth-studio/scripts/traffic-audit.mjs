@@ -27,12 +27,26 @@ const iUrl=at('landing_page_url'),iSource=at('referrer_source'),iName=at('referr
 if(iSessions<0){console.error('result must SHOW sessions');process.exit(2);}
 if(iUrl<0&&iSource<0&&iName<0){console.error('result must GROUP BY landing_page_url and/or referrer_source/referrer_name');process.exit(2);}
 
+// Rows come back positional from the Shopify MCP tool and from ShopifyQL's own
+// tableData.rowData, but an object keyed by column name is a plausible shape
+// from another client. Read either, and never quietly treat an unreadable row
+// as zero sessions - a silent zero here reads as "your traffic is clean".
+const cell=(row,index,name)=>Array.isArray(row)?row[index]:row?.[name];
+
 const parsed=rows.map(r=>({
- landingPageUrl:iUrl>=0?String(r[iUrl]??''):'',
- referrerSource:iSource>=0?r[iSource]:null,
- referrerName:iName>=0?r[iName]:null,
- sessions:Number(r[iSessions])||0,
+ landingPageUrl:iUrl>=0?String(cell(r,iUrl,'landing_page_url')??''):'',
+ referrerSource:iSource>=0?cell(r,iSource,'referrer_source')??null:null,
+ referrerName:iName>=0?cell(r,iName,'referrer_name')??null:null,
+ sessions:Number(cell(r,iSessions,'sessions')),
 }));
+
+const unreadable=parsed.filter(r=>!Number.isFinite(r.sessions)).length;
+if(unreadable===parsed.length){
+ console.error(`could not read a session count from any of ${parsed.length} rows - unexpected row shape`);
+ process.exit(2);
+}
+if(unreadable){console.error(`warning: ${unreadable} of ${parsed.length} rows had no readable session count and were skipped`);}
+for(const row of parsed)if(!Number.isFinite(row.sessions))row.sessions=0;
 
 const report=summarize(parsed);
 const pct=n=>`${(n*100).toFixed(1)}%`;
