@@ -18,6 +18,9 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?set in .env}
       AUTOPILOT_TOKEN: ${AUTOPILOT_TOKEN:?set in .env}
       DATA_DIR: /data
+      # Tracked short links must carry the public domain, not the container's
+      # own listening address. Set explicitly: a Host header can be forged.
+      PUBLIC_BASE_URL: https://${STUDIO_DOMAIN:?set in .env}
       # Caddy sets x-forwarded-for, so per-IP sign-in throttling is real here.
       TRUST_PROXY_HEADER: "true"
     volumes:
