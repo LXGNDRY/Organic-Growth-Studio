@@ -15,7 +15,23 @@ export function validCadence(value: number) {
   return ALLOWED_CADENCES.includes(value);
 }
 
-export function buildAgentConfigPatch(body: unknown, current: { enabled: boolean }): PatchResult {
+// A cadence of N hours means N hours *between* scans, so a cadence change
+// re-times the next scan from the last one rather than starting a new one.
+// Clamped so an overdue schedule runs promptly and a lastRunAt in the future
+// (clock skew, a hand-edited store) cannot push the next scan past one
+// interval. A missing or unreadable lastRunAt means nothing has run yet, so
+// the first scan is already owed.
+export function scheduleFromCadence(cadenceHours: number, lastRunAt: string | null | undefined, now: number): string {
+  const intervalMs = cadenceHours * 3_600_000;
+  const last = typeof lastRunAt === 'string' ? Date.parse(lastRunAt) : Number.NaN;
+  const target = Number.isFinite(last) ? last + intervalMs : now;
+  return new Date(Math.min(Math.max(target, now), now + intervalMs)).toISOString();
+}
+
+export function buildAgentConfigPatch(
+  body: unknown,
+  current: { enabled: boolean; lastRunAt?: string | null },
+): PatchResult {
   if (typeof body !== 'object' || body === null) return { ok: false, error: 'Invalid autopilot settings.' };
   const input = body as Record<string, unknown>;
   const patch: AgentConfigPatch = {};
@@ -35,7 +51,9 @@ export function buildAgentConfigPatch(body: unknown, current: { enabled: boolean
     patch.cadenceHours = input.cadenceHours;
     // Keyed off the resulting state, not the stored one, so enabling and
     // re-timing in one request cannot leave autopilot on with no schedule.
-    patch.nextRunAt = willBeEnabled ? new Date().toISOString() : null;
+    patch.nextRunAt = willBeEnabled
+      ? scheduleFromCadence(input.cadenceHours, current.lastRunAt, Date.now())
+      : null;
   }
 
   // Applied last so an explicit schedule wins over one derived above. This is

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAgentConfigPatch } from './agent-settings';
+import { buildAgentConfigPatch, scheduleFromCadence } from './agent-settings';
 
 const paused = { enabled: false };
 const running = { enabled: true };
@@ -81,5 +81,59 @@ describe('buildAgentConfigPatch', () => {
 
   it('clears the schedule when autopilot is turned off', () => {
     expect(buildAgentConfigPatch({ enabled: false }, running)).toEqual({ ok: true, patch: { enabled: false, nextRunAt: null } });
+  });
+});
+
+describe('scheduleFromCadence', () => {
+  const now = Date.parse('2026-10-17T12:00:00.000Z');
+  const hoursAgo = (h: number) => new Date(now - h * 3_600_000).toISOString();
+
+  it('re-times from the last run, not from now', () => {
+    // Last scan 5h ago, cadence widened to 24h: the next one is due 19h from
+    // now, which is 24h after the last scan. Previously this scanned instantly.
+    expect(scheduleFromCadence(24, hoursAgo(5), now)).toBe('2026-10-18T07:00:00.000Z');
+  });
+
+  it('runs now when the new cadence makes the schedule overdue', () => {
+    // Last scan 5h ago, cadence tightened to 1h: already 4h late.
+    expect(scheduleFromCadence(1, hoursAgo(5), now)).toBe('2026-10-17T12:00:00.000Z');
+  });
+
+  it('treats a never-run autopilot as owed a scan', () => {
+    expect(scheduleFromCadence(6, null, now)).toBe('2026-10-17T12:00:00.000Z');
+    expect(scheduleFromCadence(6, undefined, now)).toBe('2026-10-17T12:00:00.000Z');
+  });
+
+  it('falls back to now when lastRunAt is unreadable', () => {
+    expect(scheduleFromCadence(6, 'not-a-date', now)).toBe('2026-10-17T12:00:00.000Z');
+  });
+
+  it('never schedules further out than one interval', () => {
+    // A lastRunAt in the future (clock skew or a hand-edited store) must not
+    // push the next scan beyond one full cadence.
+    const future = new Date(now + 100 * 3_600_000).toISOString();
+    expect(scheduleFromCadence(6, future, now)).toBe('2026-10-17T18:00:00.000Z');
+  });
+
+  it('spans the whole cadence when a scan just finished', () => {
+    expect(scheduleFromCadence(12, new Date(now).toISOString(), now)).toBe('2026-10-18T00:00:00.000Z');
+  });
+});
+
+describe('buildAgentConfigPatch cadence scheduling', () => {
+  it('uses the interval rule when cadence changes', () => {
+    const lastRunAt = new Date(Date.now() - 5 * 3_600_000).toISOString();
+    const result = buildAgentConfigPatch({ cadenceHours: 24 }, { enabled: true, lastRunAt });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const scheduled = Date.parse(result.patch.nextRunAt as string);
+    // ~19h out, not now. Generous window so the assertion is not clock-flaky.
+    expect(scheduled - Date.now()).toBeGreaterThan(18.5 * 3_600_000);
+    expect(scheduled - Date.now()).toBeLessThan(19.5 * 3_600_000);
+  });
+
+  it('still clears the schedule when the cadence change also pauses', () => {
+    const result = buildAgentConfigPatch({ enabled: false, cadenceHours: 24 }, { enabled: true, lastRunAt: null });
+    expect(result).toEqual({ ok: true, patch: { enabled: false, cadenceHours: 24, nextRunAt: null } });
   });
 });
