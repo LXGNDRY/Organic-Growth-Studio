@@ -6,7 +6,7 @@
     "dev": "next dev -p 3010",
     "personal": "node scripts/personal.mjs",
     "build": "next build && node scripts/verify-build.mjs",
-    "start": "next start -p 3010",
+    "start": "next start -p ${PORT:-3010}",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
