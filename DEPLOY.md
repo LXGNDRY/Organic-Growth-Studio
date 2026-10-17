@@ -47,18 +47,48 @@ on a different machine.
 
 ## Deploy
 
+The container speaks **plain HTTP**. It does not terminate TLS, and publishing
+it on port 443 does not make it HTTPS — Docker port mapping only forwards
+bytes. That matters more than it sounds: in production the session cookie is
+set `Secure`, so a browser refuses to store it over plaintext and **sign-in
+fails silently, forever**. Put real TLS in front of it.
+
+### On a platform that terminates TLS (Fly, Render, Railway)
+
+Publish the HTTP port and let the platform's edge do TLS. Set the secrets and
+`DATA_DIR=/data`, attach a volume at `/data`, and keep the instance count at
+**1**. Nothing else is needed — leave `TRUST_PROXY_HEADER=true`, since the
+edge sets `x-forwarded-for`.
+
+### On your own host, behind a proxy
+
+Bind the container to **loopback only**, so it is a private upstream and never
+reachable unencrypted from outside:
+
 ```sh
 docker build -t organic-growth-studio .
 docker run -d --name studio \
-  -p 443:3010 \
+  -p 127.0.0.1:3010:3010 \
   -v studio-data:/data \
   -e APP_ACCESS_TOKEN=... -e SESSION_SECRET=... -e AUTOPILOT_TOKEN=... \
   --restart unless-stopped \
   organic-growth-studio
 ```
 
-HTTPS is required — sessions are cookie-based. Terminate TLS at a proxy in
-front of the container, or at the platform.
+Then terminate TLS in front of it. Caddy gets a certificate on its own and
+sets the forwarded headers correctly:
+
+```
+studio.example.com {
+    reverse_proxy 127.0.0.1:3010
+}
+```
+
+Any proxy works, provided it terminates TLS and forwards to `127.0.0.1:3010`.
+Keep `TRUST_PROXY_HEADER=true` in this topology: the proxy sets
+`x-forwarded-for`, which is what per-IP sign-in throttling counts on. Set it to
+`false` only if the container is somehow exposed directly — an unproxied client
+can forge that header, and every caller then shares one throttle bucket.
 
 ## Verify the deployment
 
@@ -75,6 +105,11 @@ Autopilot cycle: 200 {"startedAt":...,"status":"complete"}
 **Health alone is not enough.** A healthy app with a dead scheduler is the
 failure mode to watch for: confirm you see autopilot cycles, and that
 `lastRunAt` advances. Check it at every monthly review.
+
+**If sign-in bounces you straight back to the login page**, you are serving
+over plain HTTP. The cookie is `Secure` in production, so the browser accepts
+the response and silently discards the session. Fix the TLS termination above
+rather than the credentials.
 
 ## After the first boot
 
