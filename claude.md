@@ -2,7 +2,7 @@
 
 ## Active product
 
-Organic Growth Studio is the repository's primary application and the only active product in this workspace. The older Instagro web app, API, engagement workers, and related infrastructure are legacy code. Do not start, extend, or reconnect those systems as part of Studio work unless the owner explicitly changes scope.
+Organic Growth Studio is the only application in this repository. The older Instagro web app, API, engagement workers, and related infrastructure were removed on 2026-10-17 and are preserved on the `archive/instagro-platform` branch. Do not reintroduce those systems unless the owner explicitly changes scope.
 
 The Studio finds legitimate organic discovery opportunities, analyzes public target pages, prepares content drafts for human review, creates tagged links, and records first party referral events. It must not create artificial traffic or automate likes, follows, comments, messages, reviews, or platform interactions.
 
@@ -17,7 +17,7 @@ Keep these integrations excluded: Shopify product intelligence, Google Search Co
 - `apps/organic-growth-studio/scripts/personal.mjs` — bounded personal scheduler runner.
 - `apps/organic-growth-studio/.env.example` — names and safe local defaults; never put credentials in Git.
 - `.github/workflows/ci.yml` — the primary app's GitHub Actions checks.
-- Legacy Instagro code remains in the repository but is not part of the active app.
+- Retired Instagro code lives on the `archive/instagro-platform` branch, not in this tree.
 
 ## Local development
 

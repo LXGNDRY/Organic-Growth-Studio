@@ -44,7 +44,7 @@ pnpm start
 - Run bounded, concurrent scans and use recorded experiment outcomes to improve opportunity ranking.
 - Keep publishing manual. Integrations excluded from this build include Shopify product intelligence, Search Console, GA4 and Shopify funnel reporting, Merchant Center diagnostics, and Pinterest/TikTok publishing.
 
-The older Instagro services and workers in this repository are legacy code, outside the active product. The Studio does not connect to or run them.
+The older Instagro services and workers have been removed from this repository. They are preserved on the `archive/instagro-platform` branch and are not part of this product.
 
 ## Hosting
 
