@@ -43,6 +43,7 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
   // "thin content") against pages that were in fact fine, which sends the owner to
   // fix something that is not broken. Report only what we can stand behind.
   const pageReadable=pageBodyIsOwners(response.status);
+  if(response.ok&&!pageReadable) findings.push({id:'no-content',title:`Page returned HTTP ${response.status} with no content`,detail:'The response carried no page body, so nothing on this URL could be assessed. Confirm this URL serves the page you meant to analyze.',impact:'High',category:'Technical'});
   if(!response.ok) findings.push({id:'status',title:`Page returned HTTP ${response.status}`,detail:'Search visitors and crawlers may not be able to use this destination reliably.',impact:'High',category:'Technical'});
   if(pageReadable && !title) findings.push({id:'title',title:'Page title is missing',detail:'Add a distinct title that describes this exact page and its product or purpose.',impact:'High',category:'Search appearance'});
   else if(pageReadable && (title.length<25 || title.length>65)) findings.push({id:'title-length',title:'Review the page title length',detail:`Current title is ${title.length} characters. Check that it clearly describes the page and reads naturally in search results.`,impact:'Medium',category:'Search appearance'});
@@ -63,7 +64,17 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
     {title:'Create a tagged distribution link',channel:'Distribution',rationale:'Track outbound clicks by source and campaign with a Signal redirect and UTM parameters.',effort:'Low',score:74},
   ];
     const discovery={robotsTxt:{url:robotsTxt.url,status:robotsTxt.status,contentType:robotsTxt.contentType,error:robotsTxt.error,targetAllowed:robotsInfo.targetAllowed,sitemapUrls:robotsInfo.sitemaps},sitemap:{url:sitemapMatch?.url??sitemapCandidates[0]??null,status:sitemapMatch?.status??sitemapResults[0]?.status??null,kind:sitemapParsed?.kind??null,urlCount:sitemapParsed?.urlCount??null,sitemapCount:sitemapParsed?.sitemapCount??null,containsTarget:sitemapParsed?.containsTarget??null,valid:sitemapParsed?.valid??null},feeds};
-    return {url:finalUrl,host:new URL(finalUrl).host,title,description,status:response.status,canonical,robots,headings,imageCount:images.length,imagesWithoutAlt,wordCount,structuredData,discovery,contentAssessed:pageReadable,findings,opportunities,analyzedAt:new Date().toISOString()};
+    // Every field below the status comes from the response body. When that body
+    // is an edge block or error page it is not the owner's page, and a caller
+    // cannot tell by looking: page.tsx renders these, and adaptive.makeFeatures
+    // turns them into training features. Gating the findings was not enough -
+    // the values themselves must not escape, or a block page gets learned as
+    // "this page has no title and no text". Neutralise at the source so no
+    // present or future consumer has to remember the flag.
+    const body=pageReadable
+      ? {title,description,canonical,robots,headings,imageCount:images.length,imagesWithoutAlt,wordCount,structuredData}
+      : {title:'',description:'',canonical:null,robots:null,headings:[],imageCount:0,imagesWithoutAlt:0,wordCount:0,structuredData:{blocks:0,types:[],parseErrors:0}};
+    return {url:finalUrl,host:new URL(finalUrl).host,status:response.status,...body,discovery,contentAssessed:pageReadable,findings,opportunities,analyzedAt:new Date().toISOString()};
   }
   throw new Error('Could not safely reach that URL.');
 }
@@ -71,7 +82,13 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
 // Statuses where the response body is the owner's page rather than an edge
 // block or server error. 404 is excluded: its body is an error page too, so the
 // missing-page finding stands on its own without content noise beneath it.
-export function pageBodyIsOwners(status:number):boolean{return status>=200&&status<300;}
+export function pageBodyIsOwners(status:number):boolean{
+  // 204 and 205 are 2xx but carry no body, so response.ok is true while there
+  // is nothing to assess. Without this they would report a missing title and
+  // heading with no status finding to explain why.
+  if(status===204||status===205)return false;
+  return status>=200&&status<300;
+}
 
 // Returns the address that was checked, so the request can be pinned to it.
 // Resolving here and letting fetch resolve again leaves a gap: a hostile DNS

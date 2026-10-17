@@ -71,4 +71,12 @@ describe('pageBodyIsOwners', () => {
     expect(pageBodyIsOwners(203)).toBe(true);
     expect(pageBodyIsOwners(299)).toBe(true);
   });
+
+  it('rejects 2xx statuses that carry no body', () => {
+    // 204 and 205 are response.ok, so no status finding fires for them. Left in
+    // the assessable range they produced the same false cascade as a 429, but
+    // with nothing in the report to explain why.
+    expect(pageBodyIsOwners(204)).toBe(false);
+    expect(pageBodyIsOwners(205)).toBe(false);
+  });
 });
