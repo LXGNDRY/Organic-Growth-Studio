@@ -1,8 +1,0 @@
-{
-  "name": "@instagro/config",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Shared configs (eslint, tsconfig) for Instagro",
-  "main": "index.js",
-  "files": ["eslint-preset.js", "tsconfig.base.json"]
-}

@@ -1,0 +1,5 @@
+import {NextRequest,NextResponse} from 'next/server';
+import {store} from '@/lib/store';
+import {normalizeTargetUrl} from '@/lib/url';
+export const runtime='nodejs';
+export async function PATCH(req:NextRequest,{params}:{params:Promise<{id:string}>}){const {id}=await params;try{const b=await req.json();const update:any={};if(b.status!==undefined){if(!['draft','approved','archived'].includes(b.status))return NextResponse.json({error:'Status must be draft, approved, or archived.'},{status:400});update.status=b.status;}for(const k of ['channel','format','title','body'])if(b[k]!==undefined){if(typeof b[k]!=='string'||b[k].length>(k==='body'?6000:180))return NextResponse.json({error:`Invalid ${k}.`},{status:400});update[k]=b[k]}if(b.destination!==undefined)update.destination=normalizeTargetUrl(b.destination);const draft=await store.updateDraft(id,update);return draft?NextResponse.json({draft}):NextResponse.json({error:'Draft not found.'},{status:404});}catch(e){return NextResponse.json({error:e instanceof Error?e.message:'Invalid draft update.'},{status:400});}}

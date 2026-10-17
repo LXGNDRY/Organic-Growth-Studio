@@ -1,0 +1,21 @@
+import type {Experiment} from '@/lib/store';
+
+export const ACTIONS=['technical_fix','visual_content','educational_content','tracked_distribution','short_video'] as const;
+export type Action=typeof ACTIONS[number];
+const ACTION_LABELS:Record<Action,string>={technical_fix:'Resolve a page issue',visual_content:'Create original visual assets',educational_content:'Publish a useful buyer guide',tracked_distribution:'Test a tracked distribution link',short_video:'Create an original short video'};
+export function makeFeatures(action:Action,analysis:any):number[]{
+ const findings=Array.isArray(analysis?.findings)?analysis.findings:[];const imgs=Number(analysis?.imageCount)||0;const noAlt=Number(analysis?.imagesWithoutAlt)||0;const words=Number(analysis?.wordCount)||0;
+ const high=findings.filter((x:any)=>x.impact==='High').length,med=findings.filter((x:any)=>x.impact==='Medium').length;
+ return [Number(/\/products?\//i.test(analysis?.url||'')),Number(/\/collections?\//i.test(analysis?.url||'')),Math.min(1,high/2),Math.min(1,med/4),imgs?noAlt/imgs:0,Number(!analysis?.title),Number(!analysis?.description),Math.max(0,Math.min(1,words/500)),Number(action==='technical_fix'),Number(action==='visual_content'),Number(action==='educational_content'),Number(action==='tracked_distribution'),Number(action==='short_video')];
+}
+type Net={w1:number[][];b1:number[];w2:number[][];b2:number[]};
+function init(input:number,hidden:number,output:number):Net{let seed=98317;const rand=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return (seed>>>0)/4294967295-.5};return{w1:Array.from({length:hidden},()=>Array.from({length:input},()=>rand()*.25)),b1:Array(hidden).fill(0),w2:Array.from({length:output},()=>Array.from({length:hidden},()=>rand()*.25)),b2:Array(output).fill(0)}}
+const sigmoid=(x:number)=>1/(1+Math.exp(-Math.max(-12,Math.min(12,x))));
+function forward(net:Net,x:number[]){const h=net.w1.map((w,i)=>Math.tanh(w.reduce((s,v,j)=>s+v*x[j],net.b1[i])));const y=net.w2.map((w,i)=>sigmoid(w.reduce((s,v,j)=>s+v*h[j],net.b2[i])));return{h,y}}
+function train(examples:Experiment[]):Net|null{
+ const data=examples.filter(e=>e.status==='completed'&&e.outcomes&&e.features.length===13);const unique=new Set(data.map(e=>e.action));if(data.length<5||unique.size<2)return null;
+ const net=init(13,7,3),lr=.11;
+ for(let epoch=0;epoch<180;epoch++)for(const e of data){const x=e.features,y=[e.outcomes!.sales,e.outcomes!.engagement,e.outcomes!.search].map(v=>(v-1)/4);const {h,y:pred}=forward(net,x);const d2=pred.map((v,i)=>v-y[i]);const d1=net.w1.map(()=>0);for(let j=0;j<7;j++){let z=net.b1[j];for(let k=0;k<13;k++)z+=net.w1[j][k]*x[k];const act=Math.tanh(z);let grad=0;for(let i=0;i<3;i++)grad+=d2[i]*net.w2[i][j];d1[j]=grad*(1-act*act)}for(let i=0;i<3;i++){for(let j=0;j<7;j++)net.w2[i][j]-=lr*(d2[i]*h[j]+.002*net.w2[i][j]);net.b2[i]-=lr*d2[i]}for(let j=0;j<7;j++){for(let k=0;k<13;k++)net.w1[j][k]-=lr*(d1[j]*x[k]+.002*net.w1[j][k]);net.b1[j]-=lr*d1[j]}}
+ return net;
+}
+export function rankActions(experiments:Experiment[],analysis:any){const net=train(experiments);const complete=experiments.filter(e=>e.status==='completed');return ACTIONS.map(action=>{const features=makeFeatures(action,analysis);const matching=complete.filter(e=>e.action===action);const prediction=net?forward(net,features).y.map(v=>Math.round((1+4*v)*10)/10):null;const prior=action==='technical_fix'&&features[2]>0?.87:action==='technical_fix'&&features[3]>0?.73:action==='visual_content'?.64:action==='educational_content'?.62:action==='short_video'?.60:.48;const confidence=net?Math.min(.92,.35+matching.length*.12+complete.length*.035):Math.min(.3,complete.length*.04);const objective=prediction?prediction[0]*.5+prediction[1]*.27+prediction[2]*.23:prior;return{action,title:ACTION_LABELS[action],features,prediction,score:Math.round(objective*100),confidence:Math.round(confidence*100),sampleCount:matching.length,model:net?'trained':'cold_start',reason:net?`Learned from ${complete.length} completed tests; this action has ${matching.length} prior test${matching.length===1?'':'s'}.`:action==='technical_fix'&&features[2]+features[3]>0?'Prioritized because the page scan found issues.':'Initial estimate only; this score is a starting prior, not measured performance.'}}).sort((a,b)=>b.score-a.score)}
