@@ -18,8 +18,41 @@ describe('buildAgentConfigPatch', () => {
     expect(result.ok && result.patch.nextRunAt).toBe('2026-10-17T12:00:00.000Z');
   });
 
-  it('accepts null to clear the schedule', () => {
-    expect(buildAgentConfigPatch({ nextRunAt: null }, running)).toEqual({ ok: true, patch: { nextRunAt: null } });
+  it('accepts null to clear the schedule while paused', () => {
+    expect(buildAgentConfigPatch({ nextRunAt: null }, paused)).toEqual({ ok: true, patch: { nextRunAt: null } });
+  });
+
+  it('refuses to clear the schedule while autopilot stays enabled', () => {
+    // The runner reads a missing schedule as due now, so this would have
+    // started a cycle instead of clearing one.
+    expect(buildAgentConfigPatch({ nextRunAt: null }, running).ok).toBe(false);
+    expect(buildAgentConfigPatch({ enabled: true, nextRunAt: null }, paused).ok).toBe(false);
+  });
+
+  it('allows clearing the schedule as part of pausing', () => {
+    expect(buildAgentConfigPatch({ enabled: false, nextRunAt: null }, running)).toEqual({
+      ok: true,
+      patch: { enabled: false, nextRunAt: null },
+    });
+  });
+
+  it('rejects loose date strings that Date.parse would accept', () => {
+    // "0" parses to 2000-01-01, which is in the past, so the runner would
+    // fire immediately on a value the API contract calls an ISO timestamp.
+    for (const value of ['0', '1', '2026', 'December 17, 2026', '2026-10-17T12:00:00', '2026-13-01T00:00:00Z']) {
+      expect(buildAgentConfigPatch({ nextRunAt: value }, running).ok, value).toBe(false);
+    }
+  });
+
+  it('accepts ISO instants with an explicit zone', () => {
+    for (const value of ['2026-10-17T12:00:00.000Z', '2026-10-17T12:00:00Z', '2026-10-17T12:00+02:00']) {
+      expect(buildAgentConfigPatch({ nextRunAt: value }, running).ok, value).toBe(true);
+    }
+  });
+
+  it('schedules a run when enabling and re-timing in one request', () => {
+    const result = buildAgentConfigPatch({ enabled: true, cadenceHours: 6 }, paused);
+    expect(result.ok && result.patch.nextRunAt).toEqual(expect.any(String));
   });
 
   it('rejects a nextRunAt that is not a timestamp', () => {
