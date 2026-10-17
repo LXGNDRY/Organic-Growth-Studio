@@ -1,5 +1,5 @@
-# Continuation Prompt — Organic Growth Studio / Instagro
-**Written:** 2026-10-17 · **Method:** Toyota Way / TPS · **Paste this into a fresh Claude Code session.**
+# Continuation Prompt — Organic Growth Studio
+**Updated:** 2026-10-17 · **Method:** Toyota Way / TPS · **Paste this into a fresh Claude Code session.**
 
 ---
 
@@ -10,96 +10,83 @@ Work the Toyota Way: go and see before you act, stop the line on a defect, fix r
 mistake-proof so it cannot recur, and keep work-in-process small. Be brief, use bullets and
 small tables, state trade-offs, and recommend one option.
 
-## GROUND TRUTH AS OF 2026-10-17 (verify, do not assume)
+## SETTLED DECISION (2026-10-17)
 
-**Repo:** `LXGNDRY/Organic-Growth-Studio` · default branch `main`
+**Organic Growth Studio is the product. The Instagro platform is retired.**
 
-| Branch | SHA | State |
+The retired platform is preserved in full and is recoverable:
+
+```
+git checkout -b restore-instagro archive/instagro-platform   # main 00b931a
+```
+
+Do not reintroduce `apps/api`, `apps/web`, `apps/workers` or `packages/*` unless I say so.
+
+## GROUND TRUTH (verify with git/gh before acting — this may be stale)
+
+| Ref | SHA | State |
 |---|---|---|
-| `main` | `00b931a` | Instagro platform only (apps/api, apps/web, apps/workers, packages/shared). No studio. |
-| `feat/organic-growth-studio` | `98260d7` | main + 1 commit adding the studio. **CI RED.** PR #14 closed unmerged. |
-| `chore/promote-organic-growth-studio-primary` | `3707252` | PR #15, closed unmerged. |
-| `feat/live-run-readiness` | `071845c` | PR #16 OPEN. Studio auth. CI green. |
-| `claude/fail-fast-jwt-secret` | `142e918` | PR #17 OPEN. API JWT fail-fast. No CI runs. |
+| `main` | `00b931a` | Still the old platform until #19 merges. |
+| `archive/instagro-platform` | `00b931a` | Permanent archive of the retired platform. |
+| `feat/studio-only` | `512511b` | **PR #19 → `main`.** Studio + auth, platform removed. The one to land. |
+| `docs/continuation-plan` | — | PR #18 → `main`. This document. |
+| `feat/live-run-readiness` | `071845c` | PR #16, open, superseded by #19 (its commits are in #19). |
+| `feat/organic-growth-studio` | `98260d7` | Dead-end base, CI red. Do not build on it. |
+| `claude/fail-fast-jwt-secret` | `142e918` | PR #17, closed. Fixed `apps/api`, now retired. |
 
-**Nothing studio-related has ever merged to `main`.** Four branches, zero merged, three
-stacked on a red base. That is the problem to solve first.
+### Why the old base was red (fixed by #19, keep for context)
 
-### The root defect (confirmed from CI logs, run 36993871844)
+`apps/web` typecheck failed `TS2322: Type 'bigint' is not assignable to type 'ReactNode'`
+because `apps/web` pinned `@types/react` ^18 while the Studio uses ^19 — two major versions of
+the React types in one pnpm workspace.
 
-`apps/web` typecheck fails: `src/app/layout.tsx(13,58): TS2322 — Type 'bigint' is not
-assignable to type 'ReactNode'`.
+The intermediate branches went green by narrowing `ci.yml` to the Studio while ~94 platform
+files stayed in the tree untested. **The check was removed, not the defect fixed.** #19 removes
+the conflicting package instead. If you ever find yourself making CI green by deleting a check,
+stop and tell me.
 
-**Cause:** the studio uses React 19 / `@types/react` ^19; `apps/web` uses React 18 /
-`@types/react` ^18. One pnpm workspace, two major versions of React types. Adding the studio
-(and its 823-line lockfile change) broke `apps/web`'s type resolution.
+## OPEN BACKLOG
 
-**Why it was never fixed:** PR #15 made CI green by rewriting `ci.yml` to run *only* the
-studio, and rewriting the root `package.json` to a studio-only workspace — while leaving ~94
-API/web/workers files in the tree with no CI at all. PR #16 inherits that. **The green on
-PR #16 comes from removing the inspection, not from fixing the defect.** In TPS terms, the
-andon cord was disconnected instead of the line being stopped. Do not build on that.
+| # | Finding | Status |
+|---|---|---|
+| 1 | Studio `/api/*` had no auth | Fixed in #19 (owner sign-in, signed HttpOnly sessions) |
+| 2 | Login throttle keys on `x-forwarded-for` | **OPEN** — spoofable without a trusted proxy; a flood of forged keys can also exhaust the key map and lock the owner out |
+| 3 | Tracking `POST` echoes a full Referer URL as `access-control-allow-origin` | **OPEN** — a Referer is a URL, not an origin, so the header is malformed on that path |
+| 4 | Analyzer: DNS rebinding | **OPEN** — `assertPublicHost()` resolves the name, then `fetch()` resolves it again independently. A hostile DNS server can return a public address to the check and a private one to the fetch. Fix by pinning the resolved address for the request. |
+| 5 | Analyzer: hex-form IPv4-mapped IPv6 | **OPEN** — `isPrivateAddress()` handles `::ffff:127.0.0.1` but not `::ffff:7f00:1` |
+| 6 | CI has no dependency or secret scanning | **OPEN** — `--frozen-lockfile` is now in place; `pnpm audit`, secret scan and Dependabot are not |
 
-## THE DECISION THAT GATES EVERYTHING
-
-The repo holds two products with conflicting dependency needs:
-
-1. **Instagro** — multi-tenant Instagram engagement SaaS (FastAPI + Next 14 + Python workers,
-   ~20 test files, documented in `claude.md` as "the single source of truth for the entire
-   product").
-2. **Organic Growth Studio** — single-owner Next 15 personal discovery/distribution app.
-
-Ask me which one is the product before writing any code. Most of the open security backlog
-lives in `apps/api` and disappears entirely if Instagro is archived.
-
-## OPEN SECURITY BACKLOG (from audits on 2026-10-02 and 2026-10-15)
-
-| # | Finding | Location | Survives archiving Instagro? |
-|---|---|---|---|
-| 1 | Studio `/api/*` had no auth | studio | Yes — PR #16 fixes it |
-| 2 | JWT secret defaults to `change-me` | apps/api | No |
-| 3 | CORS `*` with credentials | apps/api | No |
-| 4 | Instagram access tokens stored in plaintext | apps/api | No |
-| 5 | Billing redirect URLs unvalidated | apps/api | No |
-| 6 | Stripe webhook returns 204 after failure | apps/api | No |
-| 7 | CI: `--no-frozen-lockfile`, no dep/secret scanning | root | Yes |
-| 8 | Analyzer DNS-rebinding gap; IPv6-mapped check | studio | Yes |
-
-**Resolved:** SSRF protection in `analyzer.ts` is sound (DNS resolution, private-range blocks,
-re-checks on each redirect).
-
-### Known issues in PR #16 (reviewed 2026-10-15, not yet raised to its author)
-- Login throttle keys on `x-forwarded-for` — spoofable without a trusted proxy, and a flood of
-  fake keys can lock out the owner.
-- Tracking POST can echo a full Referer URL as `access-control-allow-origin`, which is invalid.
-- Scope creep: rewrites root `package.json`, README, `claude.md`, and CI in the same PR.
+**Verified sound, do not redo:** the analyzer's private-address blocking itself. It resolves DNS
+before fetching, blocks 0/8, 10/8, 127/8, 169.254/16, 172.16-31, 192.168/16, CGNAT and
+multicast, rejects embedded credentials and non-http(s) schemes, and re-checks the host on every
+redirect. Items 4 and 5 are the only residual gaps in that file.
 
 ## HOW TO WORK
 
-1. **Genchi genbutsu.** Re-verify the table above with `git`/`gh` before acting. It may be stale.
+1. **Genchi genbutsu.** Re-verify the table above before acting.
 2. **Stop the line.** Never make CI green by deleting a check, skipping a test, or narrowing
    scope. If a check must go, say so out loud and get my explicit yes.
-3. **One-piece flow.** One concern per PR. No mixed security + docs + CI PRs.
+3. **One-piece flow.** One concern per PR.
 4. **Reproduce first.** Show the failure, then the fix, then the same check passing.
-5. **Poka-yoke.** Every fix ends with an automated guard (test, CI gate, startup assertion) so
-   it cannot regress silently.
-6. **Limit WIP.** Do not open a fifth PR while four sit unmerged. Land or close what exists first.
+5. **Poka-yoke.** Every fix ends with an automated guard so it cannot regress silently.
+6. **Limit WIP.** Land or close what is open before opening more.
 7. **Standard work, every PR:** reproduce → minimal fix → regression test → lint/typecheck/test
    /build locally → re-read the diff adversarially → push once.
 
-## FIRST THREE ACTIONS
+## NEXT ACTIONS
 
-1. Re-verify branch/CI state and confirm the React 18/19 conflict still stands.
-2. Ask me the product decision (studio-only vs both vs split repos) with 3 options and a
-   recommendation. Do not start coding until I answer.
-3. Based on my answer, propose a merge order that gets `main` green and carrying the studio,
-   with WIP capped at 2 open PRs.
+1. Land #19, then #18. Confirm `main` is green and carries the Studio.
+2. One small PR fixing backlog items 2 and 3 (both in code #19 introduces to `main`).
+3. One PR adding the CI gates: `pnpm audit`, secret scanning, Dependabot.
+4. One PR for items 4 and 5 in the analyzer.
+5. Ask me before deploying anywhere — the JSON store and scheduler are single-process only and
+   need a persistent `DATA_DIR`, three distinct secrets, and HTTPS.
 
 ## STANDING CONSTRAINTS
 
 - Never commit secrets; `.env.example` placeholders only.
-- Never log Instagram tokens (`claude.md` calls this a P0 incident).
-- Schema changes go through Alembic, never by hand.
-- No automated likes/follows/comments/DMs in the studio — it stays an organic discovery and
-  distribution tool. Keep that boundary.
+- No automated likes, follows, comments, DMs or reviews. The Studio finds organic discovery
+  opportunities, analyzes public pages, drafts content for human review, and tracks referrals.
+  Keep that boundary.
+- Publishing stays manual.
 - Attribution footers on GitHub posts; conventional commit messages.
