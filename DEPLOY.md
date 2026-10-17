@@ -60,10 +60,55 @@ Publish the HTTP port and let the platform's edge do TLS. Set the secrets and
 **1**. Nothing else is needed — leave `TRUST_PROXY_HEADER=true`, since the
 edge sets `x-forwarded-for`.
 
-### On your own host, behind a proxy
+### On your own VPS — the scripted path
 
-Bind the container to **loopback only**, so it is a private upstream and never
-reachable unencrypted from outside:
+`deploy/` contains everything. Caddy and the Studio both run as containers;
+the Studio publishes **no ports at all** and is reachable only through Caddy
+on the internal network, so it is never exposed unencrypted.
+
+**1. A VPS.** Any provider. 1 vCPU / 1 GB RAM is enough; Ubuntu 22.04 or 24.04.
+Open ports 22, 80 and 443. Port 80 must stay open permanently — Caddy renews
+the certificate through it.
+
+**2. DNS.** Point a subdomain at the VPS IP:
+
+```
+studio.legendary-branding.com.   A   <your VPS IP>
+```
+
+A subdomain is deliberate. Your apex and `www` stay on Shopify
+(`23.227.38.x`); adding this record does not touch the storefront.
+
+**3. Run it.**
+
+```sh
+git clone https://github.com/LXGNDRY/Organic-Growth-Studio.git
+cd Organic-Growth-Studio/deploy
+sudo ./bootstrap.sh studio.legendary-branding.com
+```
+
+`bootstrap.sh` installs Docker if missing, generates the three secrets **on
+the server** into `deploy/.env` (mode 0600, git-ignored — they never travel
+through anyone's chat or repo), builds the image, and starts both containers.
+It prints your sign-in token once. Put it in a password manager.
+
+**4. Verify.**
+
+```sh
+./verify.sh studio.legendary-branding.com
+```
+
+This checks what actually matters: real TLS, the http→https redirect, the auth
+boundary returning 401, **autopilot cycles genuinely running**, the store
+surviving a container restart, and exactly one instance. A green
+`/api/health` on its own proves almost nothing — it was precisely what hid
+the dead-scheduler bug.
+
+### Any other proxy
+
+
+If you prefer your own proxy, bind the container to **loopback only** so it is
+a private upstream and never reachable unencrypted from outside:
 
 ```sh
 docker build -t organic-growth-studio .
