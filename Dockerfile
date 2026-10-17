@@ -18,6 +18,11 @@ COPY . .
 # Build runs verify-build.mjs, which fails the image if middleware is not
 # registered or a script imports something the app does not declare.
 RUN pnpm --filter organic-growth-studio build
+# Next does not require a public/ directory and this app has none, but the
+# runtime stage copies one. COPY has no "optional source", so a missing
+# directory fails the build outright. Create it here so the copy always has
+# something, and so adding static assets later needs no Dockerfile change.
+RUN mkdir -p apps/organic-growth-studio/public
 
 FROM node:22-alpine AS runtime
 WORKDIR /app/apps/organic-growth-studio
