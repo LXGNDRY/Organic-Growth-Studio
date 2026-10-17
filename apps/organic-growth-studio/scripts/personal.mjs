@@ -26,6 +26,7 @@ const args = ['node_modules/next/dist/bin/next', production ? 'start' : 'dev', '
 const server = spawn(process.execPath, args, { stdio: 'inherit', env: process.env });
 let stopping = false;
 let ticking = false;
+let unreachable = 0;
 let sessionCookie = '';
 
 async function stop() {
@@ -61,6 +62,7 @@ while (!stopping) {
         headers: { cookie },
         signal: AbortSignal.timeout(3000),
       });
+      unreachable = 0;
       if (response.status === 401) {
         sessionCookie = '';
       } else if (response.ok) {
@@ -82,7 +84,20 @@ while (!stopping) {
       }
     }
   } catch (error) {
-    if (!stopping) console.log('Autopilot waiting for app: ' + (error instanceof Error ? error.message : 'connection error'));
+    if (!stopping) {
+      unreachable += 1;
+      console.log('Autopilot waiting for app: ' + (error instanceof Error ? error.message : 'connection error'));
+      // The app can serve pages and pass health checks while the autopilot
+      // points somewhere else - a stale AUTOPILOT_BASE_URL does exactly that.
+      // Nothing then ticks, and the only symptom is a line that looks like
+      // startup noise, so say plainly that the engine is not running.
+      if (unreachable === 5 || unreachable % 60 === 0) {
+        console.error(
+          `Autopilot has not reached the app at ${base} for ${unreachable} attempts; no cycles are running. ` +
+          'Check AUTOPILOT_BASE_URL and PORT agree with the port the app bound.',
+        );
+      }
+    }
   }
   await delay(30_000);
 }
