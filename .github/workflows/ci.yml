@@ -22,6 +22,27 @@ jobs:
           node-version: "20"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+
+      # Blocks on anything shipped to production. Dev-tool advisories are not
+      # gated here: the current ones live in the latest releases of Next and
+      # Vitest, so failing on them would mean a permanently red pipeline that
+      # no one can act on. Dependabot tracks those instead.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level moderate
+
+      # Three real secrets live in .env.local on a running install, so the
+      # cheapest guard is making it impossible to commit one unnoticed.
+      - name: Reject committed env files
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)\.env' | grep -v '\.env\.example$' || true)
+          if [ -n "$tracked" ]; then
+            echo "These env files are tracked in git:"
+            echo "$tracked"
+            echo "Secrets belong in an untracked .env.local; only .env.example is committed."
+            exit 1
+          fi
+          echo "No tracked env files."
+
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test:ci

@@ -18,5 +18,11 @@
     "node": ">=20.0.0",
     "pnpm": ">=9.0.0"
   },
-  "packageManager": "pnpm@9.0.0"
+  "packageManager": "pnpm@9.0.0",
+  "pnpm": {
+    "overrides": {
+      "postcss": "^8.5.6",
+      "source-map-js": "^1.2.2"
+    }
+  }
 }
