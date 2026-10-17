@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # The dev toolchain carries advisories that CI deliberately does not gate on,
+  # because they sit in the latest releases of Next and Vitest. This is what
+  # moves them: a weekly nudge rather than a red pipeline nobody can clear.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for the routine bumps, so the queue stays readable.
+      minor-and-patch:
+        update-types: [minor, patch]
+    # Majors arrive on their own, since they need a real look.
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
