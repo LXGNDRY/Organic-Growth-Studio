@@ -3,9 +3,9 @@ import {analyzeUrl, type Analysis} from '@/lib/analyzer';
 import {rankActions} from '@/lib/adaptive';
 import {mapConcurrent} from '@/lib/concurrency';
 import {store} from '@/lib/store';
+import {ALLOWED_CADENCES as allowedCadences} from '@/lib/agent-settings';
 
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0,24);
-const allowedCadences=[1,3,6,12,24];
 const DEFAULT_SCAN_CONCURRENCY=3;
 const MAX_SCAN_CONCURRENCY=8;
 
@@ -90,4 +90,4 @@ export async function runAutonomousCycle(){
  return {startedAt,finishedAt,projectsChecked:projects.length,...totals,status,notes};
 }
 
-export function validCadence(value:number){return allowedCadences.includes(value);}
+export {validCadence} from '@/lib/agent-settings';
