@@ -57,13 +57,35 @@ async function fetchLive(){
  fail('stopped after 40 pages - pagination did not terminate');
 }
 
+// One saved page of a paginated response, or several. An ingest REPLACES the
+// catalog, so accepting a truncated file would silently delete every product
+// past the last page it contains - a saved first page of 50 would cut a
+// 126-product shop down to 50 targets and report success.
+function pageOf(value){
+ const products=value?.data?.products??value?.products??null;
+ const nodes=products?.nodes??value?.nodes??(Array.isArray(value)?value:null);
+ if(!Array.isArray(nodes))return null;
+ return{nodes,hasNextPage:products?.pageInfo?.hasNextPage===true};
+}
+
 function fromFile(path){
  let payload;
  try{payload=JSON.parse(readFileSync(path,'utf8'));}
  catch(err){fail(`cannot read ${path}: ${err.message}`,2);}
- const nodes=payload?.data?.products?.nodes??payload?.products?.nodes??payload?.nodes??(Array.isArray(payload)?payload:null);
- if(!Array.isArray(nodes))fail('could not find a product node array in that file',2);
- return nodes;
+
+ // An array of page responses is treated as the pages in order, so saved
+ // pages can be combined; a bare array of product nodes stays a single page.
+ const pages=Array.isArray(payload)&&payload.every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&(v.data?.products||v.products||v.nodes))
+  ? payload.map(pageOf)
+  : [pageOf(payload)];
+
+ if(pages.some(p=>p===null))fail('could not find a product node array in that file',2);
+ const last=pages[pages.length-1];
+ if(last.hasNextPage)fail(
+  `that response ends with pageInfo.hasNextPage = true, so it is only part of the catalog.\n`+
+  `An ingest replaces the catalog, so importing it would drop every product past this page.\n`+
+  `Run a live ingest, or save each page and pass them as a JSON array of responses.`,2);
+ return pages.flatMap(p=>p.nodes);
 }
 
 async function writeToStudio(products){
