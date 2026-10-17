@@ -12,7 +12,8 @@
     "typecheck": "pnpm --filter organic-growth-studio typecheck",
     "test": "pnpm --filter organic-growth-studio test",
     "test:ci": "pnpm --filter organic-growth-studio test:ci",
-    "clean": "pnpm --filter organic-growth-studio clean"
+    "clean": "pnpm --filter organic-growth-studio clean",
+    "smoke": "pnpm --filter organic-growth-studio smoke"
   },
   "engines": {
     "node": ">=20.0.0",

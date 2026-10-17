@@ -26,3 +26,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test:ci
       - run: pnpm build
+
+      # Starts the built app and checks the auth boundary from outside.
+      # The build-time manifest check proves middleware is registered; only a
+      # running server proves it actually guards the right paths.
+      - run: pnpm smoke

@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:ci": "vitest run",
-    "clean": "rm -rf .next .next-dev"
+    "clean": "rm -rf .next .next-dev",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "jsdom": "^24.1.3",
