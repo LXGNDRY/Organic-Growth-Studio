@@ -8,7 +8,19 @@ set -uo pipefail
 DOMAIN="${1:-}"
 [ -z "$DOMAIN" ] && { echo "usage: $0 <domain>" >&2; exit 1; }
 cd "$(dirname "$0")"
+
+# bootstrap.sh runs under sudo, so .env is root-owned 0600. Every docker
+# compose call below parses docker-compose.yml, whose ${VAR:?} entries read
+# from it - unreadable .env means a confusing "variable is not set" error
+# rather than an honest permissions one. Say so plainly instead.
+if [ ! -r .env ]; then
+  echo "cannot read deploy/.env (it is root-owned 0600)." >&2
+  echo "run this the same way you ran bootstrap:  sudo $0 $DOMAIN" >&2
+  exit 1
+fi
+
 fail=0
+skip() { printf '  \033[33mskip\033[0m %s\n' "$1"; }
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=1; }
 
@@ -42,6 +54,18 @@ if docker compose logs studio 2>/dev/null | grep -q "has not reached the app"; t
 fi
 
 echo "5. data survives a restart (the volume is really persistent)"
+# store.json is written by the first autopilot cycle, so on a brand-new
+# install it legitimately does not exist yet. Absent is not the same as lost.
+if ! docker compose exec -T studio sh -c 'test -f /data/store.json' 2>/dev/null; then
+  skip "no store.json yet - the first cycle has not written one; re-run after it has"
+  echo "6. exactly one instance"
+  n=$(docker compose ps -q studio | wc -l | tr -d ' ')
+  [ "$n" = "1" ] && ok "one studio container" \
+                 || bad "$n studio containers - the JSON store has no concurrent writers"
+  echo
+  [ "$fail" = 0 ] && echo "All checks passed (persistence pending)." || echo "Some checks FAILED - see above."
+  exit "$fail"
+fi
 before=$(docker compose exec -T studio sh -c 'cat /data/store.json 2>/dev/null | wc -c' | tr -d '\r')
 docker compose restart studio >/dev/null 2>&1
 for i in $(seq 1 60); do

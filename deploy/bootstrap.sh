@@ -63,5 +63,6 @@ echo
 echo " Certificates: Caddy issues them on the first HTTPS request. If the"
 echo " DNS A record was added moments ago, give it a minute and retry."
 echo
-echo " Now run ./verify.sh ${DOMAIN}"
+echo " Now run:  sudo ./verify.sh ${DOMAIN}"
+echo " (sudo, because .env is root-owned 0600)"
 echo "================================================================"
