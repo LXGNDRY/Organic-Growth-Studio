@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPrivateAddress, mappedIPv4 } from './analyzer';
+import { isPrivateAddress, mappedIPv4, pageBodyIsOwners } from './analyzer';
 
 // Hostnames are taken from a parsed URL, so they arrive already canonicalized.
 const hostOf = (url: string) => new URL(url).hostname.replace(/^\[|\]$/g, '');
@@ -46,5 +46,37 @@ describe('isPrivateAddress', () => {
     expect(isPrivateAddress('8.8.8.8')).toBe(false);
     expect(isPrivateAddress(hostOf('http://[::ffff:8.8.8.8]/'))).toBe(false);
     expect(isPrivateAddress('2606:4700:4700::1111')).toBe(false);
+  });
+});
+
+describe('pageBodyIsOwners', () => {
+  // Regression: a live run against a Cloudflare-protected store returned 429 for
+  // two collection pages. The analyzer parsed the block page and reported "title
+  // is missing", "no main heading", "no canonical link" and "thin content"
+  // against pages whose real markup was fine - five false findings that would
+  // send an owner to fix something that is not broken.
+  it('rejects edge blocks and server errors, whose body is not the owner page', () => {
+    expect(pageBodyIsOwners(429)).toBe(false);
+    expect(pageBodyIsOwners(403)).toBe(false);
+    expect(pageBodyIsOwners(503)).toBe(false);
+    expect(pageBodyIsOwners(500)).toBe(false);
+  });
+
+  it('rejects 404, so the missing-page finding stands without content noise', () => {
+    expect(pageBodyIsOwners(404)).toBe(false);
+  });
+
+  it('accepts the success range the owner page is actually served on', () => {
+    expect(pageBodyIsOwners(200)).toBe(true);
+    expect(pageBodyIsOwners(203)).toBe(true);
+    expect(pageBodyIsOwners(299)).toBe(true);
+  });
+
+  it('rejects 2xx statuses that carry no body', () => {
+    // 204 and 205 are response.ok, so no status finding fires for them. Left in
+    // the assessable range they produced the same false cascade as a 429, but
+    // with nothing in the report to explain why.
+    expect(pageBodyIsOwners(204)).toBe(false);
+    expect(pageBodyIsOwners(205)).toBe(false);
   });
 });

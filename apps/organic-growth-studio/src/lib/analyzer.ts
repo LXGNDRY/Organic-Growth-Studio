@@ -3,7 +3,7 @@ import {isIP} from 'node:net';
 import {Agent, fetch as pinnedFetch} from 'undici';
 import {countFeedItems,discoverFeeds,inspectJsonLd,inspectSitemap,parseRobots,type ResourceResult} from '@/lib/source-signals';
 export type Finding = { id:string; title:string; detail:string; impact:'High'|'Medium'|'Low'; category:string };
-export type Analysis = { url:string; host:string; title:string; description:string; status:number|null; canonical:string|null; robots:string|null; headings:string[]; imageCount:number; imagesWithoutAlt:number; wordCount:number; structuredData:{blocks:number;types:string[];parseErrors:number}; discovery:{robotsTxt:{url:string;status:number|null;contentType:string|null;error:string|null;targetAllowed:boolean|null;sitemapUrls:string[]};sitemap:{url:string|null;status:number|null;kind:string|null;urlCount:number|null;sitemapCount:number|null;containsTarget:boolean|null;valid:boolean|null};feeds:{url:string;type:string;status:number|null;itemCount:number|null}[]}; findings:Finding[]; opportunities:{title:string; channel:string; rationale:string; effort:string; score:number}[]; analyzedAt:string };
+export type Analysis = { url:string; host:string; title:string; description:string; status:number|null; canonical:string|null; robots:string|null; headings:string[]; imageCount:number; imagesWithoutAlt:number; wordCount:number; structuredData:{blocks:number;types:string[];parseErrors:number}; discovery:{robotsTxt:{url:string;status:number|null;contentType:string|null;error:string|null;targetAllowed:boolean|null;sitemapUrls:string[]};sitemap:{url:string|null;status:number|null;kind:string|null;urlCount:number|null;sitemapCount:number|null;containsTarget:boolean|null;valid:boolean|null};feeds:{url:string;type:string;status:number|null;itemCount:number|null}[]}; contentAssessed:boolean; findings:Finding[]; opportunities:{title:string; channel:string; rationale:string; effort:string; score:number}[]; analyzedAt:string };
 
 function textContent(root: ParentNode, selector: string) { return root.querySelector(selector)?.textContent?.trim() ?? ''; }
 function meta(doc:Document, name:string) { return doc.querySelector(`meta[name="${name}"]`)?.getAttribute('content')?.trim() ?? ''; }
@@ -38,19 +38,25 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
   const sitemapParsed=sitemapMatch?.body?inspectSitemap(sitemapMatch.body,finalUrl):null;
   const feeds=await Promise.all(discoverFeeds(doc,finalUrl).map(async feed=>{const result=await fetchRelatedText(feed.url,new URL(finalUrl).origin);return{url:feed.url,type:feed.type,status:result.status,itemCount:result.body?countFeedItems(result.body,feed.type):null};}));
   const findings:Finding[]=[];
+  // A 429/5xx/403 body is the edge's block or error page, not the owner's page.
+  // Judging it produced a cascade of false findings ("title is missing", "no H1",
+  // "thin content") against pages that were in fact fine, which sends the owner to
+  // fix something that is not broken. Report only what we can stand behind.
+  const pageReadable=pageBodyIsOwners(response.status);
+  if(response.ok&&!pageReadable) findings.push({id:'no-content',title:`Page returned HTTP ${response.status} with no content`,detail:'The response carried no page body, so nothing on this URL could be assessed. Confirm this URL serves the page you meant to analyze.',impact:'High',category:'Technical'});
   if(!response.ok) findings.push({id:'status',title:`Page returned HTTP ${response.status}`,detail:'Search visitors and crawlers may not be able to use this destination reliably.',impact:'High',category:'Technical'});
-  if(!title) findings.push({id:'title',title:'Page title is missing',detail:'Add a distinct title that describes this exact page and its product or purpose.',impact:'High',category:'Search appearance'});
-  else if(title.length<25 || title.length>65) findings.push({id:'title-length',title:'Review the page title length',detail:`Current title is ${title.length} characters. Check that it clearly describes the page and reads naturally in search results.`,impact:'Medium',category:'Search appearance'});
-  if(!description) findings.push({id:'description',title:'Meta description is missing',detail:'Write a concise, accurate summary that helps searchers decide whether this page matches their need.',impact:'Medium',category:'Search appearance'});
-  if(!doc.querySelector('h1')) findings.push({id:'h1',title:'No main heading found',detail:'Use one clear visible heading that tells shoppers what this page offers.',impact:'Medium',category:'Content'});
-  if(imagesWithoutAlt) findings.push({id:'alt',title:`${imagesWithoutAlt} of ${images.length} images lack descriptive alt text`,detail:'Describe informative product imagery accurately; use empty alt text for decorative images.',impact:'Medium',category:'Accessibility'});
-  if(robots?.toLowerCase().includes('noindex')) findings.push({id:'noindex',title:'Page asks crawlers not to index it',detail:'Confirm this is intentional before investing in discovery content for this URL.',impact:'High',category:'Indexability'});
-  if(!canonical) findings.push({id:'canonical',title:'No canonical link detected',detail:'Confirm the preferred URL if this page can be reached through multiple URL variants.',impact:'Low',category:'Technical'});
+  if(pageReadable && !title) findings.push({id:'title',title:'Page title is missing',detail:'Add a distinct title that describes this exact page and its product or purpose.',impact:'High',category:'Search appearance'});
+  else if(pageReadable && (title.length<25 || title.length>65)) findings.push({id:'title-length',title:'Review the page title length',detail:`Current title is ${title.length} characters. Check that it clearly describes the page and reads naturally in search results.`,impact:'Medium',category:'Search appearance'});
+  if(pageReadable && !description) findings.push({id:'description',title:'Meta description is missing',detail:'Write a concise, accurate summary that helps searchers decide whether this page matches their need.',impact:'Medium',category:'Search appearance'});
+  if(pageReadable && !doc.querySelector('h1')) findings.push({id:'h1',title:'No main heading found',detail:'Use one clear visible heading that tells shoppers what this page offers.',impact:'Medium',category:'Content'});
+  if(pageReadable && imagesWithoutAlt) findings.push({id:'alt',title:`${imagesWithoutAlt} of ${images.length} images lack descriptive alt text`,detail:'Describe informative product imagery accurately; use empty alt text for decorative images.',impact:'Medium',category:'Accessibility'});
+  if(pageReadable && robots?.toLowerCase().includes('noindex')) findings.push({id:'noindex',title:'Page asks crawlers not to index it',detail:'Confirm this is intentional before investing in discovery content for this URL.',impact:'High',category:'Indexability'});
+  if(pageReadable && !canonical) findings.push({id:'canonical',title:'No canonical link detected',detail:'Confirm the preferred URL if this page can be reached through multiple URL variants.',impact:'Low',category:'Technical'});
   if(robotsInfo.targetAllowed===false) findings.push({id:'robots-block',title:'robots.txt disallows this path for generic crawlers',detail:'The robots.txt rules for user-agent * match this page path with a disallow rule. Confirm the result for the specific crawler before changing it.',impact:'High',category:'Discovery'});
-  if(structuredData.parseErrors) findings.push({id:'jsonld-parse',title:'Structured data JSON-LD could not be parsed',detail:`${structuredData.parseErrors} JSON-LD block${structuredData.parseErrors===1?'':'s'} contain invalid JSON syntax. This check does not validate schema.org semantics.`,impact:'Medium',category:'Structured data'});
+  if(pageReadable && structuredData.parseErrors) findings.push({id:'jsonld-parse',title:'Structured data JSON-LD could not be parsed',detail:`${structuredData.parseErrors} JSON-LD block${structuredData.parseErrors===1?'':'s'} contain invalid JSON syntax. This check does not validate schema.org semantics.`,impact:'Medium',category:'Structured data'});
   if(sitemapMatch&&sitemapParsed&&!sitemapParsed.valid) findings.push({id:'sitemap-invalid',title:'A discovered sitemap could not be parsed',detail:'The sitemap response was reachable but did not contain a recognized urlset or sitemapindex root.',impact:'Medium',category:'Discovery'});
   if(sitemapParsed?.kind==='urlset'&&sitemapParsed.containsTarget===false) findings.push({id:'sitemap-target-missing',title:'The target URL was not found in the fetched sitemap',detail:'This single sitemap response did not list the analyzed URL. Sitemap omission does not prove a page is not indexed.',impact:'Low',category:'Discovery'});
-  if(wordCount<100) findings.push({id:'thin-content',title:'Very little readable page text detected',detail:'Consider adding useful, specific product or collection information. This is a heuristic; short product pages can still be useful.',impact:'Low',category:'Content'});
+  if(pageReadable && wordCount<100) findings.push({id:'thin-content',title:'Very little readable page text detected',detail:'Consider adding useful, specific product or collection information. This is a heuristic; short product pages can still be useful.',impact:'Low',category:'Content'});
   const opportunities=[
     {title:'Fix high-impact page findings',channel:'Page improvements',rationale:findings.find(x=>x.impact==='High')?.detail??'No high-impact issues detected by this lightweight scan. Review the findings and verify them manually.',effort:'Low',score:findings.some(x=>x.impact==='High')?95:70},
     {title:'Create an original visual discovery set',channel:'Content studio',rationale:'Prepare distinct product, detail, and styling assets, each linking to this exact destination.',effort:'Medium',score:84},
@@ -58,9 +64,30 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
     {title:'Create a tagged distribution link',channel:'Distribution',rationale:'Track outbound clicks by source and campaign with a Signal redirect and UTM parameters.',effort:'Low',score:74},
   ];
     const discovery={robotsTxt:{url:robotsTxt.url,status:robotsTxt.status,contentType:robotsTxt.contentType,error:robotsTxt.error,targetAllowed:robotsInfo.targetAllowed,sitemapUrls:robotsInfo.sitemaps},sitemap:{url:sitemapMatch?.url??sitemapCandidates[0]??null,status:sitemapMatch?.status??sitemapResults[0]?.status??null,kind:sitemapParsed?.kind??null,urlCount:sitemapParsed?.urlCount??null,sitemapCount:sitemapParsed?.sitemapCount??null,containsTarget:sitemapParsed?.containsTarget??null,valid:sitemapParsed?.valid??null},feeds};
-    return {url:finalUrl,host:new URL(finalUrl).host,title,description,status:response.status,canonical,robots,headings,imageCount:images.length,imagesWithoutAlt,wordCount,structuredData,discovery,findings,opportunities,analyzedAt:new Date().toISOString()};
+    // Every field below the status comes from the response body. When that body
+    // is an edge block or error page it is not the owner's page, and a caller
+    // cannot tell by looking: page.tsx renders these, and adaptive.makeFeatures
+    // turns them into training features. Gating the findings was not enough -
+    // the values themselves must not escape, or a block page gets learned as
+    // "this page has no title and no text". Neutralise at the source so no
+    // present or future consumer has to remember the flag.
+    const body=pageReadable
+      ? {title,description,canonical,robots,headings,imageCount:images.length,imagesWithoutAlt,wordCount,structuredData}
+      : {title:'',description:'',canonical:null,robots:null,headings:[],imageCount:0,imagesWithoutAlt:0,wordCount:0,structuredData:{blocks:0,types:[],parseErrors:0}};
+    return {url:finalUrl,host:new URL(finalUrl).host,status:response.status,...body,discovery,contentAssessed:pageReadable,findings,opportunities,analyzedAt:new Date().toISOString()};
   }
   throw new Error('Could not safely reach that URL.');
+}
+
+// Statuses where the response body is the owner's page rather than an edge
+// block or server error. 404 is excluded: its body is an error page too, so the
+// missing-page finding stands on its own without content noise beneath it.
+export function pageBodyIsOwners(status:number):boolean{
+  // 204 and 205 are 2xx but carry no body, so response.ok is true while there
+  // is nothing to assess. Without this they would report a missing title and
+  // heading with no status finding to explain why.
+  if(status===204||status===205)return false;
+  return status>=200&&status<300;
 }
 
 // Returns the address that was checked, so the request can be pinned to it.
