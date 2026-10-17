@@ -81,9 +81,28 @@ async function fetchRelatedText(input:string,expectedOrigin:string):Promise<Reso
  }
  return{url:parsed.toString(),status:null,contentType:null,body:null,error:'Could not reach related resource.'};
 }
-function isPrivateAddress(address:string):boolean{
+// WHATWG URL canonicalizes [::ffff:127.0.0.1] to ::ffff:7f00:1, so an
+// IPv4-mapped address reaches us in hex far more often than in dotted form.
+// Decode the low 32 bits and judge them as IPv4; anything we cannot decode is
+// treated as private, so an unfamiliar encoding fails closed rather than open.
+export function mappedIPv4(ip:string):string|null{
+  const match=/^::ffff:(?:0:)?(.+)$/.exec(ip);
+  if(!match)return null;
+  const tail=match[1];
+  if(isIP(tail)===4)return tail;
+  const hex=/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(tail);
+  if(!hex)return null;
+  const high=Number.parseInt(hex[1],16),low=Number.parseInt(hex[2],16);
+  return `${(high>>8)&255}.${high&255}.${(low>>8)&255}.${low&255}`;
+}
+
+export function isPrivateAddress(address:string):boolean{
   if(isIP(address)===4){const [a,b]=address.split('.').map(Number);return a===0||a===10||a===127||a>=224||(a===100&&b>=64&&b<=127)||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||(a===198&&(b===18||b===19));}
-  const ip=address.toLowerCase();return ip==='::'||ip==='::1'||ip.startsWith('fc')||ip.startsWith('fd')||/^fe[89ab]/.test(ip)||ip.startsWith('::ffff:')&&isPrivateAddress(ip.slice(7));
+  const ip=address.toLowerCase();
+  if(ip==='::'||ip==='::1'||ip.startsWith('fc')||ip.startsWith('fd')||/^fe[89ab]/.test(ip))return true;
+  if(!ip.startsWith('::ffff:'))return false;
+  const mapped=mappedIPv4(ip);
+  return mapped===null?true:isPrivateAddress(mapped);
 }
 async function readLimited(response:Response,maxBytes:number){
   const length=Number(response.headers.get('content-length')||0);if(length>maxBytes)throw new Error('The page is too large to analyze (maximum 2 MB).');
