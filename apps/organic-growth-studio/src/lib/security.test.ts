@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, it, test } from 'vitest';
 import {
   createFixedWindowLimiter,
   createSessionCookie,
   SESSION_TTL_SECONDS,
+  SHARED_THROTTLE_KEY,
+  throttleKey,
   verifyOwnerToken,
   verifySessionCookie,
 } from './security';
@@ -50,4 +52,53 @@ test('fixed-window limiter rejects excess requests and resets after its window',
   expect(limit('client', 1100).allowed).toBe(true);
   expect(limit('client', 1200)).toEqual({ allowed: false, retryAfterSeconds: 1 });
   expect(limit('client', 2000).allowed).toBe(true);
+});
+
+describe('throttleKey', () => {
+  const saved = process.env.TRUST_PROXY_HEADER;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.TRUST_PROXY_HEADER;
+    else process.env.TRUST_PROXY_HEADER = saved;
+  });
+
+  it('ignores x-forwarded-for when no proxy is declared', () => {
+    delete process.env.TRUST_PROXY_HEADER;
+    // Regression: a forged header used to mint a fresh bucket per request,
+    // which both defeated the limit and could exhaust the key map.
+    expect(throttleKey('1.2.3.4')).toBe(SHARED_THROTTLE_KEY);
+    expect(throttleKey('9.9.9.9')).toBe(SHARED_THROTTLE_KEY);
+    expect(throttleKey(null)).toBe(SHARED_THROTTLE_KEY);
+  });
+
+  it('uses the rightmost entry when a proxy is declared', () => {
+    process.env.TRUST_PROXY_HEADER = 'true';
+    expect(throttleKey('1.2.3.4, 10.0.0.9')).toBe('10.0.0.9');
+    expect(throttleKey('  10.0.0.9  ')).toBe('10.0.0.9');
+  });
+
+  it('falls back to the shared key when a declared proxy sends nothing usable', () => {
+    process.env.TRUST_PROXY_HEADER = 'true';
+    expect(throttleKey(null)).toBe(SHARED_THROTTLE_KEY);
+    expect(throttleKey('')).toBe(SHARED_THROTTLE_KEY);
+  });
+});
+
+describe('createFixedWindowLimiter reset', () => {
+  it('clears a blocked key so a proven owner is not locked out', () => {
+    const limiter = createFixedWindowLimiter(2, 60_000);
+    expect(limiter('k').allowed).toBe(true);
+    expect(limiter('k').allowed).toBe(true);
+    expect(limiter('k').allowed).toBe(false);
+    limiter.reset('k');
+    expect(limiter('k').allowed).toBe(true);
+  });
+
+  it('only clears the key it is given', () => {
+    const limiter = createFixedWindowLimiter(1, 60_000);
+    limiter('a');
+    limiter('b');
+    limiter.reset('a');
+    expect(limiter('a').allowed).toBe(true);
+    expect(limiter('b').allowed).toBe(false);
+  });
 });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authConfigurationReady, createFixedWindowLimiter, createSessionCookie, SESSION_COOKIE, verifyOwnerToken } from '@/lib/security';
+import { authConfigurationReady, createFixedWindowLimiter, createSessionCookie, SESSION_COOKIE, throttleKey, verifyOwnerToken } from '@/lib/security';
 
 export const runtime = 'nodejs';
 const attempts = createFixedWindowLimiter(10, 15 * 60 * 1000);
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
 
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (contentLength > 2048) return NextResponse.json({ error: 'Request is too large.' }, { status: 413 });
-  const key = (request.headers.get('x-forwarded-for') || 'unknown').split(',').pop()?.trim() || 'unknown';
+  const key = throttleKey(request.headers.get('x-forwarded-for'));
   const limit = attempts(key);
   if (!limit.allowed) {
     return NextResponse.json({ error: 'Too many sign-in attempts. Try again later.' }, {
@@ -39,6 +39,10 @@ export async function POST(request: NextRequest) {
       headers: { 'cache-control': 'no-store' },
     });
   }
+
+  // A proven owner clears the window, so a burst of failures cannot keep them
+  // out once they sign in with the real token.
+  attempts.reset(key);
 
   const response = NextResponse.json({ ok: true }, { headers: { 'cache-control': 'no-store' } });
   response.cookies.set(SESSION_COOKIE, await createSessionCookie(), {

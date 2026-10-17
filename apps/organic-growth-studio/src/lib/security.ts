@@ -74,9 +74,31 @@ export async function verifySessionCookie(value: string | undefined, now = Date.
   return crypto.subtle.verify('HMAC', key, signature as BufferSource, encoder.encode(expiresText + '.' + nonce));
 }
 
-export function createFixedWindowLimiter(limit: number, windowMs: number, maxKeys = 5000) {
+export type FixedWindowLimiter = ((key: string, now?: number) => { allowed: boolean; retryAfterSeconds: number })
+  & { reset: (key: string) => void };
+
+// A throttle key taken straight from x-forwarded-for is attacker-controlled
+// whenever nothing trusted sits in front of the app: the caller can forge a
+// fresh key per request to slip the limit, and can mint enough distinct keys to
+// fill the map and lock everyone out. Only read the header when the deployment
+// declares a proxy; otherwise every caller shares one key.
+export function trustsProxyHeader(): boolean {
+  return process.env.TRUST_PROXY_HEADER === 'true';
+}
+
+export const SHARED_THROTTLE_KEY = 'all';
+
+export function throttleKey(forwardedFor: string | null): string {
+  if (!trustsProxyHeader()) return SHARED_THROTTLE_KEY;
+  // Rightmost entry is the peer the nearest proxy actually observed; entries to
+  // its left are whatever the client sent.
+  const observed = (forwardedFor || '').split(',').pop()?.trim();
+  return observed || SHARED_THROTTLE_KEY;
+}
+
+export function createFixedWindowLimiter(limit: number, windowMs: number, maxKeys = 5000): FixedWindowLimiter {
   const entries = new Map<string, { count: number; resetAt: number }>();
-  return (key: string, now = Date.now()): { allowed: boolean; retryAfterSeconds: number } => {
+  const limiter = ((key: string, now = Date.now()): { allowed: boolean; retryAfterSeconds: number } => {
     let entry = entries.get(key);
     if (!entry || entry.resetAt <= now) {
       if (entries.size >= maxKeys) {
@@ -89,5 +111,7 @@ export function createFixedWindowLimiter(limit: number, windowMs: number, maxKey
     if (entry.count >= limit) return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)) };
     entry.count += 1;
     return { allowed: true, retryAfterSeconds: 0 };
-  };
+  }) as FixedWindowLimiter;
+  limiter.reset = (key: string) => { entries.delete(key); };
+  return limiter;
 }

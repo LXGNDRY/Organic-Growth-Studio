@@ -18,6 +18,21 @@ function corsHeaders(origin: string) {
   };
 }
 
+// Origin is absent on some beacon sends, so Referer is the fallback. A Referer
+// is a full URL, and echoing one into access-control-allow-origin emits a
+// malformed header, so reduce it to a bare origin before it is used or sent.
+function requestOrigin(request: NextRequest): string | null {
+  const origin = request.headers.get('origin');
+  if (origin) return origin;
+  const referer = request.headers.get('referer');
+  if (!referer) return null;
+  try {
+    return new URL(referer).origin;
+  } catch {
+    return null;
+  }
+}
+
 async function matchingOrigin(projectId: string, origin: string | null) {
   if (!origin) return false;
   try {
@@ -57,7 +72,7 @@ export async function OPTIONS(request: NextRequest, { params }: Context) {
 
 export async function POST(request: NextRequest, { params }: Context) {
   const { projectId } = await params;
-  const origin = request.headers.get('origin') || request.headers.get('referer');
+  const origin = requestOrigin(request);
   if (!await matchingOrigin(projectId, origin)) return new NextResponse(null, { status: 403 });
   const ip = (request.headers.get('x-forwarded-for') || 'unknown').split(',').pop()?.trim() || 'unknown';
   const limit = rateLimit(ip);
