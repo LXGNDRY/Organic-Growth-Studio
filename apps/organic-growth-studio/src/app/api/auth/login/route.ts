@@ -17,14 +17,6 @@ export async function POST(request: NextRequest) {
 
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (contentLength > 2048) return NextResponse.json({ error: 'Request is too large.' }, { status: 413 });
-  const key = throttleKey(request.headers.get('x-forwarded-for'));
-  const limit = attempts(key);
-  if (!limit.allowed) {
-    return NextResponse.json({ error: 'Too many sign-in attempts. Try again later.' }, {
-      status: 429,
-      headers: { 'retry-after': String(limit.retryAfterSeconds), 'cache-control': 'no-store' },
-    });
-  }
 
   let body: unknown;
   try {
@@ -33,16 +25,33 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid sign-in request.' }, { status: 400 });
   }
   const token = typeof body === 'object' && body !== null && 'token' in body ? body.token : undefined;
-  if (!(await verifyOwnerToken(token))) {
+
+  // The owner token is checked before the throttle, and only failures consume
+  // the window. Gating first would let anyone spend a shared bucket and lock
+  // the owner out, because a valid token would be rejected before it could
+  // ever be verified.
+  const key = throttleKey(request.headers.get('x-forwarded-for'));
+  if (await verifyOwnerToken(token)) {
+    attempts.reset(key);
+  } else {
+    if (!authConfigurationReady()) {
+      return NextResponse.json({ error: 'The access token is incorrect or authentication is not configured.' }, {
+        status: 503,
+        headers: { 'cache-control': 'no-store' },
+      });
+    }
+    const limit = attempts(key);
+    if (!limit.allowed) {
+      return NextResponse.json({ error: 'Too many sign-in attempts. Try again later.' }, {
+        status: 429,
+        headers: { 'retry-after': String(limit.retryAfterSeconds), 'cache-control': 'no-store' },
+      });
+    }
     return NextResponse.json({ error: 'The access token is incorrect or authentication is not configured.' }, {
-      status: authConfigurationReady() ? 401 : 503,
+      status: 401,
       headers: { 'cache-control': 'no-store' },
     });
   }
-
-  // A proven owner clears the window, so a burst of failures cannot keep them
-  // out once they sign in with the real token.
-  attempts.reset(key);
 
   const response = NextResponse.json({ ok: true }, { headers: { 'cache-control': 'no-store' } });
   response.cookies.set(SESSION_COOKIE, await createSessionCookie(), {
