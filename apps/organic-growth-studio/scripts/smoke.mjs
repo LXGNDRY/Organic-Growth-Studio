@@ -38,6 +38,14 @@ const stop = () => {
   try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* best effort */ }
 };
 
+// Every request is bounded. Without this a route that accepts the connection
+// but never answers would hang the awaited fetch, the readiness deadline below
+// would never be re-checked, and a smoke test meant to fail fast would instead
+// stall the job until the workflow's own timeout.
+const REQUEST_TIMEOUT_MS = 10_000;
+const request = (path, init = {}) =>
+  fetch(`${base}${path}`, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+
 const failures = [];
 const check = (name, actual, expected) => {
   const ok = actual === expected;
@@ -50,22 +58,22 @@ try {
   for (;;) {
     if (server.exitCode !== null) throw new Error(`server exited early:\n${serverOutput}`);
     try {
-      const probe = await fetch(`${base}/api/health`);
+      const probe = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2_000) });
       if (probe.ok) break;
-    } catch { /* not listening yet */ }
+    } catch { /* not listening yet, or not answering */ }
     if (Date.now() > deadline) throw new Error(`server never became ready:\n${serverOutput}`);
     await new Promise(r => setTimeout(r, 500));
   }
 
   console.log('smoke: auth boundary');
-  check('GET /api/health is public', (await fetch(`${base}/api/health`)).status, 200);
-  check('GET /login is public', (await fetch(`${base}/login`)).status, 200);
+  check('GET /api/health is public', (await request('/api/health')).status, 200);
+  check('GET /login is public', (await request('/login')).status, 200);
 
   for (const path of ['/api/projects', '/api/agent', '/api/analyze']) {
-    check(`GET ${path} rejects anonymous`, (await fetch(`${base}${path}`)).status, 401);
+    check(`GET ${path} rejects anonymous`, (await request(path)).status, 401);
   }
 
-  const dashboard = await fetch(`${base}/`, { redirect: 'manual' });
+  const dashboard = await request('/', { redirect: 'manual' });
   check('GET / redirects anonymous to sign-in', dashboard.status, 307);
   check(
     'GET / redirect target is /login',
@@ -73,7 +81,7 @@ try {
     '/login',
   );
 
-  const post = (body) => fetch(`${base}/api/auth/login`, {
+  const post = (body) => request('/api/auth/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -89,7 +97,7 @@ try {
     .join('; ');
   check('sign-in sets a session cookie', cookie.includes('ogs_session=') , true);
 
-  const authed = await fetch(`${base}/api/projects`, { headers: { cookie } });
+  const authed = await request('/api/projects', { headers: { cookie } });
   check('GET /api/projects accepts the session', authed.status, 200);
 } catch (error) {
   console.error(`smoke: ${error.message}`);
