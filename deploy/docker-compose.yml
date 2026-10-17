@@ -1,0 +1,50 @@
+# Single-owner deployment. Exactly one studio instance, one volume.
+# The JSON store has no concurrent writers: never set deploy.replicas or run
+# `docker compose up --scale`.
+
+services:
+  studio:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # No `ports:` on purpose. The Studio speaks plain HTTP and is reachable
+    # only through caddy on the internal network, so it is never exposed
+    # unencrypted - not even on the host's loopback.
+    expose:
+      - "3010"
+    environment:
+      APP_ACCESS_TOKEN: ${APP_ACCESS_TOKEN:?set in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set in .env}
+      AUTOPILOT_TOKEN: ${AUTOPILOT_TOKEN:?set in .env}
+      DATA_DIR: /data
+      # Caddy sets x-forwarded-for, so per-IP sign-in throttling is real here.
+      TRUST_PROXY_HEADER: "true"
+    volumes:
+      - studio-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3010/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      STUDIO_DOMAIN: ${STUDIO_DOMAIN:?set in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # certificates - losing this re-issues them
+      - caddy-config:/config
+    depends_on:
+      - studio
+
+volumes:
+  studio-data:
+  caddy-data:
+  caddy-config:

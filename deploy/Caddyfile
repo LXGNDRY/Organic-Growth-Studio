@@ -1,0 +1,11 @@
+# Caddy obtains and renews the certificate itself. Port 80 must stay open for
+# the ACME challenge even though everything redirects to HTTPS.
+{$STUDIO_DOMAIN} {
+	reverse_proxy studio:3010
+
+	encode gzip
+
+	# The app sets its own security headers; this one needs the real scheme,
+	# which only the TLS terminator knows.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}

@@ -26,3 +26,6 @@ secrets/
 *.key
 *.crt
 .cache/
+
+# VPS deployment secrets - generated on the server, never committed
+deploy/.env

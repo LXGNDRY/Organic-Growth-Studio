@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Post-deploy checks. These target the ways this app fails *while looking
+# healthy* - a green /api/health proves almost nothing on its own.
+#
+#   ./verify.sh studio.example.com
+set -uo pipefail
+
+DOMAIN="${1:-}"
+[ -z "$DOMAIN" ] && { echo "usage: $0 <domain>" >&2; exit 1; }
+cd "$(dirname "$0")"
+fail=0
+ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; }
+bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=1; }
+
+echo "1. TLS is real (not plaintext on 443)"
+if curl -sS --max-time 15 "https://${DOMAIN}/api/health" | grep -q '"status":"ok"'; then
+  ok "https handshake succeeds and health is ok"
+else
+  bad "https failed - certificate not issued yet, or DNS not pointing here"
+fi
+
+echo "2. http redirects to https"
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "http://${DOMAIN}/api/health")
+case "$code" in 30*) ok "http -> $code redirect";; *) bad "expected a redirect from http, got $code";; esac
+
+echo "3. the auth boundary holds"
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://${DOMAIN}/api/projects")
+[ "$code" = "401" ] && ok "private API returns 401 without a session" \
+                    || bad "private API returned $code, expected 401"
+
+echo "4. the scheduler is actually running"
+# The failure that matters most: the app serves fine while nothing ticks.
+if docker compose logs studio 2>/dev/null | grep -q "Autopilot cycle:"; then
+  ok "autopilot cycles present in the log"
+  docker compose logs studio 2>/dev/null | grep "Autopilot cycle:" | tail -1 | sed 's/^/       /'
+else
+  bad "no autopilot cycle yet - if the container started <30s ago wait and re-run;"
+  echo "       otherwise look for 'has not reached the app' in: docker compose logs studio"
+fi
+if docker compose logs studio 2>/dev/null | grep -q "has not reached the app"; then
+  bad "the runner cannot reach the app - the engine is NOT working"
+fi
+
+echo "5. data survives a restart (the volume is really persistent)"
+before=$(docker compose exec -T studio sh -c 'cat /data/store.json 2>/dev/null | wc -c' | tr -d '\r')
+docker compose restart studio >/dev/null 2>&1
+for i in $(seq 1 60); do
+  docker compose exec -T studio wget -q -O /dev/null http://127.0.0.1:3010/api/health 2>/dev/null && break
+  sleep 1
+done
+after=$(docker compose exec -T studio sh -c 'cat /data/store.json 2>/dev/null | wc -c' | tr -d '\r')
+if [ -n "$after" ] && [ "${after:-0}" -gt 0 ] && [ "${after:-0}" -ge "${before:-0}" ]; then
+  ok "store.json persisted across restart (${before:-0} -> ${after} bytes)"
+else
+  bad "store did not survive a restart - the volume is not mounted correctly"
+fi
+
+echo "6. exactly one instance"
+n=$(docker compose ps -q studio | wc -l | tr -d ' ')
+[ "$n" = "1" ] && ok "one studio container" \
+               || bad "$n studio containers - the JSON store has no concurrent writers"
+
+echo
+[ "$fail" = 0 ] && echo "All checks passed." || echo "Some checks FAILED - see above."
+exit "$fail"
