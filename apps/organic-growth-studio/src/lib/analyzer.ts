@@ -3,7 +3,7 @@ import {isIP} from 'node:net';
 import {Agent, fetch as pinnedFetch} from 'undici';
 import {countFeedItems,discoverFeeds,inspectJsonLd,inspectSitemap,parseRobots,type ResourceResult} from '@/lib/source-signals';
 export type Finding = { id:string; title:string; detail:string; impact:'High'|'Medium'|'Low'; category:string };
-export type Analysis = { url:string; host:string; title:string; description:string; status:number|null; canonical:string|null; robots:string|null; headings:string[]; imageCount:number; imagesWithoutAlt:number; wordCount:number; structuredData:{blocks:number;types:string[];parseErrors:number}; discovery:{robotsTxt:{url:string;status:number|null;contentType:string|null;error:string|null;targetAllowed:boolean|null;sitemapUrls:string[]};sitemap:{url:string|null;status:number|null;kind:string|null;urlCount:number|null;sitemapCount:number|null;containsTarget:boolean|null;valid:boolean|null};feeds:{url:string;type:string;status:number|null;itemCount:number|null}[]}; contentAssessed:boolean; findings:Finding[]; opportunities:{title:string; channel:string; rationale:string; effort:string; score:number}[]; analyzedAt:string };
+export type Analysis = { url:string; host:string; title:string; description:string; status:number|null; canonical:string|null; robots:string|null; headings:string[]; imageCount:number; imagesWithoutAlt:number; decorativeImages:number; wordCount:number; structuredData:{blocks:number;types:string[];parseErrors:number}; discovery:{robotsTxt:{url:string;status:number|null;contentType:string|null;error:string|null;targetAllowed:boolean|null;sitemapUrls:string[]};sitemap:{url:string|null;status:number|null;kind:string|null;urlCount:number|null;sitemapCount:number|null;containsTarget:boolean|null;valid:boolean|null};feeds:{url:string;type:string;status:number|null;itemCount:number|null}[]}; contentAssessed:boolean; findings:Finding[]; opportunities:{title:string; channel:string; rationale:string; effort:string; score:number}[]; analyzedAt:string };
 
 function textContent(root: ParentNode, selector: string) { return root.querySelector(selector)?.textContent?.trim() ?? ''; }
 function meta(doc:Document, name:string) { return doc.querySelector(`meta[name="${name}"]`)?.getAttribute('content')?.trim() ?? ''; }
@@ -27,7 +27,8 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
   const robots=meta(doc,'robots') || meta(doc,'googlebot') || null;
   const structuredData=inspectJsonLd(doc);
   const headings=[...doc.querySelectorAll('h1,h2')].map(x=>x.textContent?.trim()??'').filter(Boolean).slice(0,12);
-  const images=[...doc.images]; const imagesWithoutAlt=images.filter(i=>!i.hasAttribute('alt') || !i.getAttribute('alt')?.trim()).length;
+  const images=[...doc.images]; const altStates=images.map(i=>altState(i.hasAttribute('alt'),i.getAttribute('alt')));
+  const imagesWithoutAlt=altStates.filter(x=>x==='missing').length, decorativeImages=altStates.filter(x=>x==='decorative').length;
   const mainText=(doc.querySelector('main')??doc.body)?.textContent?.replace(/\s+/g,' ').trim()??'';
   const wordCount=mainText.split(/\s+/).filter(Boolean).length;
   const robotsTxt=await fetchRelatedText(new URL('/robots.txt',finalUrl).toString(),new URL(finalUrl).origin);
@@ -49,7 +50,7 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
   else if(pageReadable && (title.length<25 || title.length>65)) findings.push({id:'title-length',title:'Review the page title length',detail:`Current title is ${title.length} characters. Check that it clearly describes the page and reads naturally in search results.`,impact:'Medium',category:'Search appearance'});
   if(pageReadable && !description) findings.push({id:'description',title:'Meta description is missing',detail:'Write a concise, accurate summary that helps searchers decide whether this page matches their need.',impact:'Medium',category:'Search appearance'});
   if(pageReadable && !doc.querySelector('h1')) findings.push({id:'h1',title:'No main heading found',detail:'Use one clear visible heading that tells shoppers what this page offers.',impact:'Medium',category:'Content'});
-  if(pageReadable && imagesWithoutAlt) findings.push({id:'alt',title:`${imagesWithoutAlt} of ${images.length} images lack descriptive alt text`,detail:'Describe informative product imagery accurately; use empty alt text for decorative images.',impact:'Medium',category:'Accessibility'});
+  if(pageReadable && imagesWithoutAlt) findings.push({id:'alt',title:`${imagesWithoutAlt} of ${images.length} images have no alt attribute`,detail:'Describe informative product imagery accurately. Images that are purely decorative should carry an explicit empty alt attribute, which this check treats as intentional rather than missing.',impact:'Medium',category:'Accessibility'});
   if(pageReadable && robots?.toLowerCase().includes('noindex')) findings.push({id:'noindex',title:'Page asks crawlers not to index it',detail:'Confirm this is intentional before investing in discovery content for this URL.',impact:'High',category:'Indexability'});
   if(pageReadable && !canonical) findings.push({id:'canonical',title:'No canonical link detected',detail:'Confirm the preferred URL if this page can be reached through multiple URL variants.',impact:'Low',category:'Technical'});
   if(robotsInfo.targetAllowed===false) findings.push({id:'robots-block',title:'robots.txt disallows this path for generic crawlers',detail:'The robots.txt rules for user-agent * match this page path with a disallow rule. Confirm the result for the specific crawler before changing it.',impact:'High',category:'Discovery'});
@@ -72,11 +73,22 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
     // "this page has no title and no text". Neutralise at the source so no
     // present or future consumer has to remember the flag.
     const body=pageReadable
-      ? {title,description,canonical,robots,headings,imageCount:images.length,imagesWithoutAlt,wordCount,structuredData}
-      : {title:'',description:'',canonical:null,robots:null,headings:[],imageCount:0,imagesWithoutAlt:0,wordCount:0,structuredData:{blocks:0,types:[],parseErrors:0}};
+      ? {title,description,canonical,robots,headings,imageCount:images.length,imagesWithoutAlt,decorativeImages,wordCount,structuredData}
+      : {title:'',description:'',canonical:null,robots:null,headings:[],imageCount:0,imagesWithoutAlt:0,decorativeImages:0,wordCount:0,structuredData:{blocks:0,types:[],parseErrors:0}};
     return {url:finalUrl,host:new URL(finalUrl).host,status:response.status,...body,discovery,contentAssessed:pageReadable,findings,opportunities,analyzedAt:new Date().toISOString()};
   }
   throw new Error('Could not safely reach that URL.');
+}
+
+// An absent alt attribute and alt="" mean different things. WCAG prescribes
+// alt="" for decorative images, so counting it as missing flagged the very
+// practice this tool recommends: a live catalog run reported the same
+// "image lacks alt text" finding on all 79 product pages, every one of them
+// the shared video poster inside an already-labelled play button.
+export type AltState='missing'|'decorative'|'described';
+export function altState(hasAttribute:boolean,value:string|null):AltState{
+  if(!hasAttribute)return 'missing';
+  return value?.trim() ? 'described' : 'decorative';
 }
 
 // Statuses where the response body is the owner's page rather than an edge
