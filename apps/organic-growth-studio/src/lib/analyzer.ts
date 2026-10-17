@@ -1,5 +1,6 @@
 import {lookup} from 'node:dns/promises';
 import {isIP} from 'node:net';
+import {Agent, fetch as pinnedFetch} from 'undici';
 import {countFeedItems,discoverFeeds,inspectJsonLd,inspectSitemap,parseRobots,type ResourceResult} from '@/lib/source-signals';
 export type Finding = { id:string; title:string; detail:string; impact:'High'|'Medium'|'Low'; category:string };
 export type Analysis = { url:string; host:string; title:string; description:string; status:number|null; canonical:string|null; robots:string|null; headings:string[]; imageCount:number; imagesWithoutAlt:number; wordCount:number; structuredData:{blocks:number;types:string[];parseErrors:number}; discovery:{robotsTxt:{url:string;status:number|null;contentType:string|null;error:string|null;targetAllowed:boolean|null;sitemapUrls:string[]};sitemap:{url:string|null;status:number|null;kind:string|null;urlCount:number|null;sitemapCount:number|null;containsTarget:boolean|null;valid:boolean|null};feeds:{url:string;type:string;status:number|null;itemCount:number|null}[]}; findings:Finding[]; opportunities:{title:string; channel:string; rationale:string; effort:string; score:number}[]; analyzedAt:string };
@@ -10,8 +11,10 @@ function meta(doc:Document, name:string) { return doc.querySelector(`meta[name="
 export async function analyzeUrl(input:string):Promise<Analysis> {
   let parsed = new URL(input);
   for(let redirect=0;redirect<=5;redirect++){
-    await assertPublicHost(parsed.hostname);
-    const response=await fetch(parsed.toString(), {redirect:'manual', signal:AbortSignal.timeout(12000), headers:{'User-Agent':'OrganicGrowthStudio/0.1 (+page diagnostics; contact site owner)'}});
+    const agent=pinnedAgent(await resolvePublicAddresses(parsed.hostname));
+    let response;
+    try{response=await pinnedFetch(parsed.toString(), {dispatcher:agent, redirect:'manual', signal:AbortSignal.timeout(12000), headers:{'User-Agent':'OrganicGrowthStudio/0.1 (+page diagnostics; contact site owner)'}});}
+    finally{void agent.close();}
     if(response.status>=300&&response.status<400){const location=response.headers.get('location');if(!location)throw new Error('The page returned a redirect without a destination.');if(redirect===5)throw new Error('The page redirected too many times.');parsed=new URL(location,parsed);if(!['http:','https:'].includes(parsed.protocol))throw new Error('Redirects must use http or https.');continue;}
     const html=await readLimited(response,2_000_000);
     const finalUrl=parsed.toString();
@@ -60,20 +63,36 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
   throw new Error('Could not safely reach that URL.');
 }
 
-async function assertPublicHost(hostname:string){
+// Returns the address that was checked, so the request can be pinned to it.
+// Resolving here and letting fetch resolve again leaves a gap: a hostile DNS
+// server can answer with a public address for the check and a private one for
+// the connection. The caller connects to exactly what was approved.
+async function resolvePublicAddresses(hostname:string):Promise<string[]>{
   const host=hostname.toLowerCase().replace(/^\[|\]$/g,'');
   if(host==='localhost'||host.endsWith('.localhost')||host.endsWith('.local')||host==='::1')throw new Error('Private and local network URLs cannot be analyzed.');
   let addresses:string[];
   if(isIP(host))addresses=[host];else{try{addresses=(await lookup(host,{all:true,verbatim:true})).map(x=>x.address)}catch{throw new Error('The target hostname could not be resolved.')}}
   if(!addresses.length||addresses.some(isPrivateAddress))throw new Error('Private and local network URLs cannot be analyzed.');
+  return addresses;
+}
+
+// TLS still negotiates against the URL's hostname, so certificate validation is
+// unchanged; only the set of addresses that may be dialled is fixed. All of
+// them are handed over, not just the first, so a dual-stack or load-balanced
+// host keeps its normal connection failover between addresses already checked.
+function pinnedAgent(addresses:string[]):Agent{
+  const pinned=addresses.map(address=>({address,family:isIP(address)}));
+  return new Agent({connect:{lookup:(_hostname,_options,cb)=>cb(null,pinned)}});
 }
 async function fetchRelatedText(input:string,expectedOrigin:string):Promise<ResourceResult>{
  let parsed:URL;try{parsed=new URL(input)}catch{return{url:input,status:null,contentType:null,body:null,error:'Invalid resource URL.'}}
  if(!['http:','https:'].includes(parsed.protocol)||parsed.origin!==expectedOrigin||parsed.username||parsed.password)return{url:input,status:null,contentType:null,body:null,error:'Related resources must remain on the page origin.'};
  for(let redirect=0;redirect<=3;redirect++){
   try{
-   await assertPublicHost(parsed.hostname);
-   const response=await fetch(parsed.toString(),{redirect:'manual',signal:AbortSignal.timeout(3500),headers:{'User-Agent':'OrganicGrowthStudio/0.1 (+page diagnostics; contact site owner)'}});
+   const agent=pinnedAgent(await resolvePublicAddresses(parsed.hostname));
+   let response;
+   try{response=await pinnedFetch(parsed.toString(),{dispatcher:agent,redirect:'manual',signal:AbortSignal.timeout(3500),headers:{'User-Agent':'OrganicGrowthStudio/0.1 (+page diagnostics; contact site owner)'}});}
+   finally{void agent.close();}
    if(response.status>=300&&response.status<400){const location=response.headers.get('location');if(!location)return{url:parsed.toString(),status:response.status,contentType:response.headers.get('content-type'),body:null,error:'Redirect has no destination.'};if(redirect===3)return{url:parsed.toString(),status:response.status,contentType:response.headers.get('content-type'),body:null,error:'Too many redirects.'};const next=new URL(location,parsed);if(!['http:','https:'].includes(next.protocol)||next.origin!==expectedOrigin||next.username||next.password)return{url:parsed.toString(),status:response.status,contentType:response.headers.get('content-type'),body:null,error:'Cross-origin redirects are not followed.'};parsed=next;continue;}
    if(!response.ok)return{url:parsed.toString(),status:response.status,contentType:response.headers.get('content-type'),body:null,error:null};
    const body=await readLimited(response,512_000);return{url:parsed.toString(),status:response.status,contentType:response.headers.get('content-type'),body,error:null};
@@ -104,9 +123,13 @@ export function isPrivateAddress(address:string):boolean{
   const mapped=mappedIPv4(ip);
   return mapped===null?true:isPrivateAddress(mapped);
 }
-async function readLimited(response:Response,maxBytes:number){
+// Structural, so it accepts both the global Response and undici's: it only
+// reads a header and streams the body.
+type ReadableResponse={headers:{get(name:string):string|null};body:{getReader():{read():Promise<{done:boolean;value?:Uint8Array}>;cancel():Promise<unknown>;releaseLock():void}}|null};
+
+async function readLimited(response:ReadableResponse,maxBytes:number){
   const length=Number(response.headers.get('content-length')||0);if(length>maxBytes)throw new Error('The page is too large to analyze (maximum 2 MB).');
   if(!response.body)return '';const reader=response.body.getReader();const chunks:Uint8Array[]=[];let size=0;
-  try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>maxBytes){await reader.cancel();throw new Error('The page is too large to analyze (maximum 2 MB).');}chunks.push(value);}}finally{reader.releaseLock();}
+  try{while(true){const {done,value}=await reader.read();if(done||!value)break;size+=value.byteLength;if(size>maxBytes){await reader.cancel();throw new Error('The page is too large to analyze (maximum 2 MB).');}chunks.push(value);}}finally{reader.releaseLock();}
   const all=new Uint8Array(size);let offset=0;for(const chunk of chunks){all.set(chunk,offset);offset+=chunk.byteLength;}return new TextDecoder().decode(all);
 }
