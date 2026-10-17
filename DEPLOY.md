@@ -66,9 +66,19 @@ edge sets `x-forwarded-for`.
 the Studio publishes **no ports at all** and is reachable only through Caddy
 on the internal network, so it is never exposed unencrypted.
 
-**1. A VPS.** Any provider. 1 vCPU / 1 GB RAM is enough; Ubuntu 22.04 or 24.04.
-Open ports 22, 80 and 443. Port 80 must stay open permanently — Caddy renews
-the certificate through it.
+**1. A VPS.** Ubuntu 22.04 or 24.04, **2 GB RAM minimum**. The image is built
+on the box and `next build` peaks around 1.2 GB on its own — a 1 GB instance
+is OOM-killed partway through, usually with a confusing "signal 9" rather than
+an out-of-memory message. 1 vCPU is fine; the build is slow on one core, not
+impossible. Open ports 22, 80 and 443, and keep 80 open permanently, since
+Caddy renews the certificate through it.
+
+If you only have a 1 GB box, add swap before building:
+
+```sh
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+```
 
 **2. DNS.** Point a subdomain at the VPS IP:
 
