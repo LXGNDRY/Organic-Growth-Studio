@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPrivateAddress, mappedIPv4, pageBodyIsOwners } from './analyzer';
+import { altState, isPrivateAddress, mappedIPv4, pageBodyIsOwners } from './analyzer';
 
 // Hostnames are taken from a parsed URL, so they arrive already canonicalized.
 const hostOf = (url: string) => new URL(url).hostname.replace(/^\[|\]$/g, '');
@@ -78,5 +78,25 @@ describe('pageBodyIsOwners', () => {
     // with nothing in the report to explain why.
     expect(pageBodyIsOwners(204)).toBe(false);
     expect(pageBodyIsOwners(205)).toBe(false);
+  });
+});
+
+describe('altState', () => {
+  // Regression: a run over all 79 product pages reported "image lacks alt text"
+  // on every one. Each was the same shared video poster carrying alt="" inside
+  // a play button that already had an accessible name - the WCAG-correct way to
+  // mark an image decorative, and the very thing the finding's advice tells the
+  // owner to do. 79 false findings across the catalog.
+  it('treats an explicit empty alt as decorative, not missing', () => {
+    expect(altState(true, '')).toBe('decorative');
+    expect(altState(true, '   ')).toBe('decorative');
+  });
+
+  it('treats an absent alt attribute as missing', () => {
+    expect(altState(false, null)).toBe('missing');
+  });
+
+  it('treats a real description as described', () => {
+    expect(altState(true, 'Washed black hoodie, front view')).toBe('described');
   });
 });
