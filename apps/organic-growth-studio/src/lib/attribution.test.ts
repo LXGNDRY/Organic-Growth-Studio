@@ -25,8 +25,10 @@ const ADMIN_ORDER: OrderJourney = {
   lastVisit: { source: 'https://admin.shopify.com/', landingPage: 'https://legendary-branding.com/', utmParameters: null },
 };
 
+// Real order, fully refunded: Shopify keeps totalPriceSet at 88.70 forever
+// while netPaymentSet is 0.00.
 const NO_JOURNEY_ORDER: OrderJourney = {
-  name: '#LB1115', amount: '88.7', currency: 'USD', momentsCount: 0, firstVisit: null, lastVisit: null,
+  name: '#LB1115', amount: '88.7', netAmount: '0.0', currency: 'USD', momentsCount: 0, firstVisit: null, lastVisit: null,
 };
 
 const DIRECT_ORDER: OrderJourney = {
@@ -100,7 +102,46 @@ describe('attributeOrder', () => {
 
   it('handles an order with no journey at all', () => {
     const a = attributeOrder(NO_JOURNEY_ORDER, [LINK]);
-    expect(a).toMatchObject({ channel: 'unknown', touch: 'none', linkId: null, amount: 88.7 });
+    expect(a).toMatchObject({ channel: 'unknown', touch: 'none', linkId: null });
+  });
+
+  it('attributes net of refunds, not the original order value', () => {
+    // #LB1115 and #LB1112 are both fully refunded in the live shop - $345.96
+    // the shop gave back. Crediting totalPriceSet would report that as earned.
+    const a = attributeOrder(NO_JOURNEY_ORDER, [LINK]);
+    expect(a.amount).toBe(0);
+    expect(a.grossAmount).toBe(88.7);
+    expect(a.refunded).toBe(true);
+  });
+
+  it('falls back to gross when net was not selected', () => {
+    // Keeps an older saved response readable instead of reporting every
+    // order in it as worth nothing.
+    const a = attributeOrder({ name: 'X', amount: '84.00' }, []);
+    expect(a).toMatchObject({ amount: 84, grossAmount: 84, refunded: false });
+  });
+
+  it('refuses to credit any link when two of them claim the order', () => {
+    // Nothing enforces campaign uniqueness, and a link with no content
+    // matches a visit that has content - so a stale wildcard link could
+    // otherwise steal a later content-specific link's revenue. Crediting the
+    // first match would silently assign revenue to the wrong experiment.
+    const wildcard: LinkKey = { id: 'old-link', source: 'studio', medium: 'organic', campaign: 'hoodie-460-oct', content: null };
+    const specific: LinkKey = { id: 'new-link', source: 'studio', medium: 'organic', campaign: 'hoodie-460-oct', content: 'variant-a' };
+    const order: OrderJourney = { name: 'X', amount: '84.00',
+      lastVisit: { utmParameters: { source: 'studio', medium: 'organic', campaign: 'hoodie-460-oct', content: 'variant-a' } } };
+    const a = attributeOrder(order, [wildcard, specific]);
+    expect(a.channel).toBe('ambiguous-link');
+    expect(a.linkId).toBeNull();
+    expect(a.reason).toContain('old-link');
+    expect(a.reason).toContain('new-link');
+  });
+
+  it('still credits a single unambiguous match', () => {
+    const other: LinkKey = { id: 'other', source: 'studio', medium: 'organic', campaign: 'tee-280-nov', content: null };
+    const order: OrderJourney = { name: 'X', amount: '84.00',
+      lastVisit: { utmParameters: { source: 'studio', medium: 'organic', campaign: 'hoodie-460-oct' } } };
+    expect(attributeOrder(order, [other, LINK])).toMatchObject({ linkId: 'link-1', channel: 'tracked-link' });
   });
 
   it('reports direct as direct rather than guessing', () => {
@@ -129,12 +170,14 @@ describe('classifyVisit', () => {
 });
 
 describe('reporting', () => {
-  const rows = [CHATGPT_ORDER, CHATGPT_ORDER, FREE_LISTING_ORDER, ADMIN_ORDER, DIRECT_ORDER].map(o => attributeOrder(o, [LINK]));
+  const rows = [CHATGPT_ORDER, CHATGPT_ORDER, FREE_LISTING_ORDER, ADMIN_ORDER, DIRECT_ORDER, NO_JOURNEY_ORDER].map(o => attributeOrder(o, [LINK]));
 
   it('splits revenue by channel, biggest first', () => {
     const byChannel = revenueByChannel(rows);
     expect(byChannel[0]).toMatchObject({ channel: 'internal', orders: 1, revenue: 305 });
     expect(byChannel.find(c => c.channel === 'ai-assistant')).toMatchObject({ orders: 2, revenue: 141.5 });
+    // The refunded order contributes nothing.
+    expect(byChannel.find(c => c.channel === 'unknown')).toMatchObject({ orders: 1, revenue: 0 });
   });
 
   it('claims nothing for the engine when no link was involved', () => {

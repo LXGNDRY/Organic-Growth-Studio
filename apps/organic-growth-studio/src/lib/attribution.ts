@@ -14,6 +14,10 @@ export type Visit={occurredAt?:string|null;source?:string|null;landingPage?:stri
 export type OrderJourney={
  name?:string|null;
  createdAt?:string|null;
+ // What the shop actually kept: Shopify's netPaymentSet, received minus
+ // refunded. A refunded order keeps its original totalPriceSet forever, so
+ // attributing on gross credits a channel with money the shop gave back.
+ netAmount?:string|number|null;
  amount?:string|number|null;
  currency?:string|null;
  momentsCount?:number|null;
@@ -26,7 +30,8 @@ export type LinkKey={id:string;source:string;medium:string;campaign:string;conte
 
 export type AttributionTouch='last-click'|'first-click'|'none';
 export type RevenueChannel=
- |'tracked-link'   // the engine's own /go/ link
+ |'tracked-link'    // the engine's own /go/ link
+ |'ambiguous-link'  // more than one link claims this order; none is credited
  |'ai-assistant'   // ChatGPT and peers citing the shop
  |'free-listing'   // Merchant Center Surfaces Across Google
  |'paid-click'
@@ -38,7 +43,9 @@ export type RevenueChannel=
 export type OrderAttribution={
  order:string;
  createdAt:string|null;
- amount:number;
+ amount:number;        // net of refunds - the figure every report uses
+ grossAmount:number;   // order value before refunds, kept for context
+ refunded:boolean;
  currency:string|null;
  linkId:string|null;
  touch:AttributionTouch;
@@ -118,20 +125,40 @@ export function classifyVisit(visit:Visit):{channel:RevenueChannel;reason:string
 }
 
 export function attributeOrder(order:OrderJourney,links:LinkKey[]):OrderAttribution{
+ const gross=amountOf(order.amount);
+ // netAmount absent means the caller did not select it; fall back to gross
+ // rather than reporting every order as worth nothing.
+ const net=order.netAmount===undefined||order.netAmount===null?gross:amountOf(order.netAmount);
  const base={
   order:(order.name||'').trim()||'(unnamed)',
   createdAt:order.createdAt??null,
-  amount:amountOf(order.amount),
+  amount:net,
+  grossAmount:gross,
+  refunded:net<gross,
   currency:order.currency??null,
   productHandles:Array.isArray(order.productHandles)?order.productHandles:[],
  };
 
+ // Every link that claims the visit, not the first one found. Nothing stops
+ // two links sharing a campaign, and a link with no content matches a visit
+ // that has content, so a stale wildcard link can otherwise steal a later
+ // content-specific link's orders. Crediting the first match would quietly
+ // assign revenue to the wrong experiment, which is the one number this
+ // module exists to get right.
+ const resolve=(visit:Visit,touch:AttributionTouch):OrderAttribution|null=>{
+  const matches=links.filter(l=>visitMatchesLink(visit,l));
+  if(!matches.length)return null;
+  if(matches.length>1)return{...base,linkId:null,touch,channel:'ambiguous-link',
+   reason:`${matches.length} links claim campaign ${matches[0].campaign}: ${matches.map(m=>m.id).join(', ')}`};
+  return{...base,linkId:matches[0].id,touch,channel:'tracked-link',reason:`campaign ${matches[0].campaign}`};
+ };
+
  // Last click wins where both touches match a link: it is the visit that
  // carried the customer into the purchase.
- const last=links.find(l=>visitMatchesLink(order.lastVisit,l));
- if(last)return{...base,linkId:last.id,touch:'last-click',channel:'tracked-link',reason:`campaign ${last.campaign}`};
- const first=links.find(l=>visitMatchesLink(order.firstVisit,l));
- if(first)return{...base,linkId:first.id,touch:'first-click',channel:'tracked-link',reason:`campaign ${first.campaign}`};
+ const last=resolve(order.lastVisit,'last-click');
+ if(last)return last;
+ const first=resolve(order.firstVisit,'first-click');
+ if(first)return first;
 
  const visit=order.lastVisit||order.firstVisit||null;
  const {channel,reason}=classifyVisit(visit);

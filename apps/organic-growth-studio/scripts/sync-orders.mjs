@@ -2,12 +2,14 @@
 // Pulls Shopify orders into the Studio and attributes their revenue, so the
 // engine learns from dollars rather than clicks.
 //
-//   node scripts/sync-orders.mjs                  # last 90 days, live
+//   node scripts/sync-orders.mjs                  # last 60 days, live
 //   node scripts/sync-orders.mjs --days 30
 //   node scripts/sync-orders.mjs orders.json      # from a saved Admin API response
 //   node scripts/sync-orders.mjs --dry-run
 //
-// Live pull needs SHOPIFY_STORE_DOMAIN and SHOPIFY_ADMIN_TOKEN (read_orders).
+// Live pull needs SHOPIFY_STORE_DOMAIN and SHOPIFY_ADMIN_TOKEN. A read_orders
+// token only reaches the last 60 days, which is why that is the default; going
+// further needs read_all_orders, which Shopify grants on request.
 // Writing needs PUBLIC_BASE_URL (or STUDIO_URL) and APP_ACCESS_TOKEN.
 
 import {readFileSync} from 'node:fs';
@@ -18,7 +20,7 @@ nextEnv.loadEnvConfig(process.cwd());
 const args=process.argv.slice(2);
 const dryRun=args.includes('--dry-run');
 const daysArg=args.indexOf('--days');
-const days=daysArg>=0?Number(args[daysArg+1]):90;
+const days=daysArg>=0?Number(args[daysArg+1]):60;
 // Guard the -1 case: without --days, daysArg+1 is 0, which would skip a
 // filename passed as the first argument and silently fall back to a live pull.
 const daysValueIndex=daysArg>=0?daysArg+1:-1;
@@ -27,11 +29,19 @@ const API_VERSION='2025-07';
 const fail=(msg,code=1)=>{console.error(msg);process.exit(code);};
 
 if(!Number.isFinite(days)||days<1||days>730)fail('--days must be between 1 and 730',2);
+// Shopify caps read_orders at the last 60 days. Beyond that it returns what it
+// is allowed to and says nothing, so a 90-day request would quietly report a
+// 60-day answer as if it covered 90.
+const ORDER_SCOPE_DAYS=60;
+if(days>ORDER_SCOPE_DAYS&&!file)
+ console.error(`note: ${days} days requested. A read_orders token only reaches ${ORDER_SCOPE_DAYS} days`
+  +` and Shopify truncates silently, so this needs read_all_orders to be complete.`);
 
 const QUERY=`query($after:String,$q:String){orders(first:50,after:$after,query:$q,sortKey:CREATED_AT,reverse:true){
  pageInfo{hasNextPage endCursor}
  nodes{name createdAt
   totalPriceSet{shopMoney{amount currencyCode}}
+  netPaymentSet{shopMoney{amount}}
   customerJourneySummary{momentsCount{count}
    firstVisit{occurredAt source landingPage utmParameters{source medium campaign content}}
    lastVisit{occurredAt source landingPage utmParameters{source medium campaign content}}}
@@ -42,6 +52,7 @@ const toJourney=n=>({
  name:n?.name??null,
  createdAt:n?.createdAt??null,
  amount:n?.totalPriceSet?.shopMoney?.amount??null,
+ netAmount:n?.netPaymentSet?.shopMoney?.amount??null,
  currency:n?.totalPriceSet?.shopMoney?.currencyCode??null,
  momentsCount:n?.customerJourneySummary?.momentsCount?.count??null,
  firstVisit:n?.customerJourneySummary?.firstVisit??null,
@@ -110,8 +121,10 @@ const orders=nodes.map(toJourney);
 console.log(`\norders read: ${orders.length}`);
 
 if(dryRun){
- const revenue=orders.reduce((t,o)=>t+(Number(o.amount)||0),0);
- console.log(`revenue:     ${revenue.toFixed(2)}`);
+ const gross=orders.reduce((t,o)=>t+(Number(o.amount)||0),0);
+ const net=orders.reduce((t,o)=>t+(Number(o.netAmount??o.amount)||0),0);
+ console.log(`gross:       ${gross.toFixed(2)}`);
+ console.log(`net of refunds: ${net.toFixed(2)}`);
  console.log(`no journey:  ${orders.filter(o=>!o.firstVisit&&!o.lastVisit).length}`);
  console.log('\ndry run - nothing written\n');
  process.exit(0);
@@ -119,8 +132,8 @@ if(dryRun){
 
 const result=await postToStudio(orders);
 console.log(`synced:      ${result.synced}   stored: ${result.stored}   links considered: ${result.linksConsidered}\n`);
-console.log('revenue by channel:');
-for(const c of result.byChannel||[])console.log(`  ${c.channel.padEnd(14)} ${String(c.orders).padStart(4)} orders  ${c.revenue.toFixed(2)}`);
+console.log('revenue by channel (net of refunds):');
+for(const c of result.byChannel||[])console.log(`  ${c.channel.padEnd(15)} ${String(c.orders).padStart(4)} orders  ${c.revenue.toFixed(2)}`);
 console.log('\nrevenue the engine earned:');
 if(!(result.byLink||[]).length)console.log('  none yet - no order carried a tracked link');
 for(const l of result.byLink||[])console.log(`  ${l.linkId}  ${l.orders} orders  ${l.revenue.toFixed(2)}`);
