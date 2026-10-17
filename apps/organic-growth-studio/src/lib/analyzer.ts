@@ -11,7 +11,7 @@ function meta(doc:Document, name:string) { return doc.querySelector(`meta[name="
 export async function analyzeUrl(input:string):Promise<Analysis> {
   let parsed = new URL(input);
   for(let redirect=0;redirect<=5;redirect++){
-    const agent=pinnedAgent(await resolvePublicAddress(parsed.hostname));
+    const agent=pinnedAgent(await resolvePublicAddresses(parsed.hostname));
     let response;
     try{response=await pinnedFetch(parsed.toString(), {dispatcher:agent, redirect:'manual', signal:AbortSignal.timeout(12000), headers:{'User-Agent':'OrganicGrowthStudio/0.1 (+page diagnostics; contact site owner)'}});}
     finally{void agent.close();}
@@ -67,26 +67,29 @@ export async function analyzeUrl(input:string):Promise<Analysis> {
 // Resolving here and letting fetch resolve again leaves a gap: a hostile DNS
 // server can answer with a public address for the check and a private one for
 // the connection. The caller connects to exactly what was approved.
-async function resolvePublicAddress(hostname:string):Promise<string>{
+async function resolvePublicAddresses(hostname:string):Promise<string[]>{
   const host=hostname.toLowerCase().replace(/^\[|\]$/g,'');
   if(host==='localhost'||host.endsWith('.localhost')||host.endsWith('.local')||host==='::1')throw new Error('Private and local network URLs cannot be analyzed.');
   let addresses:string[];
   if(isIP(host))addresses=[host];else{try{addresses=(await lookup(host,{all:true,verbatim:true})).map(x=>x.address)}catch{throw new Error('The target hostname could not be resolved.')}}
   if(!addresses.length||addresses.some(isPrivateAddress))throw new Error('Private and local network URLs cannot be analyzed.');
-  return addresses[0];
+  return addresses;
 }
 
 // TLS still negotiates against the URL's hostname, so certificate validation is
-// unchanged; only the address dialled is fixed.
-function pinnedAgent(address:string):Agent{
-  return new Agent({connect:{lookup:(_hostname,_options,cb)=>cb(null,[{address,family:isIP(address)}])}});
+// unchanged; only the set of addresses that may be dialled is fixed. All of
+// them are handed over, not just the first, so a dual-stack or load-balanced
+// host keeps its normal connection failover between addresses already checked.
+function pinnedAgent(addresses:string[]):Agent{
+  const pinned=addresses.map(address=>({address,family:isIP(address)}));
+  return new Agent({connect:{lookup:(_hostname,_options,cb)=>cb(null,pinned)}});
 }
 async function fetchRelatedText(input:string,expectedOrigin:string):Promise<ResourceResult>{
  let parsed:URL;try{parsed=new URL(input)}catch{return{url:input,status:null,contentType:null,body:null,error:'Invalid resource URL.'}}
  if(!['http:','https:'].includes(parsed.protocol)||parsed.origin!==expectedOrigin||parsed.username||parsed.password)return{url:input,status:null,contentType:null,body:null,error:'Related resources must remain on the page origin.'};
  for(let redirect=0;redirect<=3;redirect++){
   try{
-   const agent=pinnedAgent(await resolvePublicAddress(parsed.hostname));
+   const agent=pinnedAgent(await resolvePublicAddresses(parsed.hostname));
    let response;
    try{response=await pinnedFetch(parsed.toString(),{dispatcher:agent,redirect:'manual',signal:AbortSignal.timeout(3500),headers:{'User-Agent':'OrganicGrowthStudio/0.1 (+page diagnostics; contact site owner)'}});}
    finally{void agent.close();}
