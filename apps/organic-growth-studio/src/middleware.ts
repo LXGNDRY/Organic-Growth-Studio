@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authConfigurationReady, SESSION_COOKIE, verifySessionCookie } from './src/lib/security';
+import { authConfigurationReady, SESSION_COOKIE, verifySessionCookie } from '@/lib/security';
 
 function isPublicPath(pathname: string): boolean {
   return pathname === '/login'
