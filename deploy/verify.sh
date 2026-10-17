@@ -24,6 +24,20 @@ skip() { printf '  \033[33mskip\033[0m %s\n' "$1"; }
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=1; }
 
+# This is normally run straight after "docker compose up", when the container
+# is seconds old: Caddy answers 502 for an app still booting, and the first
+# autopilot tick has not fired. Checking immediately reports a healthy deploy
+# as broken, so wait for the app to be up before judging anything.
+printf 'waiting for the Studio to be ready'
+ready=0
+for _ in $(seq 1 60); do
+  if docker compose exec -T studio wget -q -O /dev/null http://127.0.0.1:3010/api/health 2>/dev/null; then
+    ready=1; printf ' ready\n\n'; break
+  fi
+  printf '.'; sleep 1
+done
+[ "$ready" = 1 ] || { printf '\n'; bad "app never became ready - docker compose logs studio"; }
+
 echo "1. TLS is real (not plaintext on 443)"
 if curl -sS --max-time 15 "https://${DOMAIN}/api/health" | grep -q '"status":"ok"'; then
   ok "https handshake succeeds and health is ok"
@@ -46,7 +60,14 @@ echo "4. the scheduler is actually running"
 # so a 500 also prints "Autopilot cycle: 500", and the cycle itself reports
 #   status = notes.length ? (analysesSaved ? 'partial' : 'failed') : 'complete'
 # so a failed run can arrive under HTTP 200. Check both.
-last_cycle=$(docker compose logs studio 2>/dev/null | grep "Autopilot cycle:" | tail -1)
+# The runner polls every 30s, so a freshly started container legitimately has
+# no cycle yet. Wait out one interval before concluding the engine is dead.
+last_cycle=""
+for _ in $(seq 1 45); do
+  last_cycle=$(docker compose logs studio 2>/dev/null | grep "Autopilot cycle:" | tail -1)
+  [ -n "$last_cycle" ] && break
+  sleep 1
+done
 if [ -z "$last_cycle" ]; then
   bad "no autopilot cycle yet - if the container started <30s ago wait and re-run;"
   echo "       otherwise look for 'has not reached the app' in: docker compose logs studio"
