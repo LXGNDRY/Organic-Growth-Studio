@@ -42,18 +42,32 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://${DOMAIN}/a
 
 echo "4. the scheduler is actually running"
 # The failure that matters most: the app serves fine while nothing ticks.
-if docker compose logs studio 2>/dev/null | grep -q "Autopilot cycle:"; then
-  ok "autopilot cycles present in the log"
-  docker compose logs studio 2>/dev/null | grep "Autopilot cycle:" | tail -1 | sed 's/^/       /'
-else
+# A cycle line alone is not success - personal.mjs logs the status verbatim,
+# so a 500 also prints "Autopilot cycle: 500", and the cycle itself reports
+#   status = notes.length ? (analysesSaved ? 'partial' : 'failed') : 'complete'
+# so a failed run can arrive under HTTP 200. Check both.
+last_cycle=$(docker compose logs studio 2>/dev/null | grep "Autopilot cycle:" | tail -1)
+if [ -z "$last_cycle" ]; then
   bad "no autopilot cycle yet - if the container started <30s ago wait and re-run;"
   echo "       otherwise look for 'has not reached the app' in: docker compose logs studio"
+else
+  cycle_code=$(printf '%s' "$last_cycle" | sed -n 's/.*Autopilot cycle: \([0-9][0-9]*\).*/\1/p')
+  if [ "$cycle_code" != "200" ]; then
+    bad "latest cycle returned HTTP ${cycle_code:-?} - the tick is failing"
+  elif printf '%s' "$last_cycle" | grep -q '"status":"failed"'; then
+    bad "latest cycle reported status failed - it ran but saved nothing"
+  elif printf '%s' "$last_cycle" | grep -q '"status":"partial"'; then
+    ok "cycles running, latest was partial (some projects errored - check notes)"
+  else
+    ok "latest cycle completed cleanly"
+  fi
+  printf '       %s\n' "$last_cycle"
 fi
 if docker compose logs studio 2>/dev/null | grep -q "has not reached the app"; then
   bad "the runner cannot reach the app - the engine is NOT working"
 fi
 
-echo "5. data survives a restart (the volume is really persistent)"
+echo "5. data survives the container being destroyed (the volume is real)"
 # store.json is written by the first autopilot cycle, so on a brand-new
 # install it legitimately does not exist yet. Absent is not the same as lost.
 if ! docker compose exec -T studio sh -c 'test -f /data/store.json' 2>/dev/null; then
@@ -67,16 +81,19 @@ if ! docker compose exec -T studio sh -c 'test -f /data/store.json' 2>/dev/null;
   exit "$fail"
 fi
 before=$(docker compose exec -T studio sh -c 'cat /data/store.json 2>/dev/null | wc -c' | tr -d '\r')
-docker compose restart studio >/dev/null 2>&1
+# A plain restart reuses the same container, so its writable layer survives
+# and the check would pass even with no volume mounted at all. Destroy and
+# recreate it: only a real named volume carries the data across that.
+docker compose up -d --force-recreate studio >/dev/null 2>&1
 for i in $(seq 1 60); do
   docker compose exec -T studio wget -q -O /dev/null http://127.0.0.1:3010/api/health 2>/dev/null && break
   sleep 1
 done
 after=$(docker compose exec -T studio sh -c 'cat /data/store.json 2>/dev/null | wc -c' | tr -d '\r')
 if [ -n "$after" ] && [ "${after:-0}" -gt 0 ] && [ "${after:-0}" -ge "${before:-0}" ]; then
-  ok "store.json persisted across restart (${before:-0} -> ${after} bytes)"
+  ok "store.json survived container recreation (${before:-0} -> ${after} bytes)"
 else
-  bad "store did not survive a restart - the volume is not mounted correctly"
+  bad "store lost when the container was recreated - /data is NOT on the named volume"
 fi
 
 echo "6. exactly one instance"
