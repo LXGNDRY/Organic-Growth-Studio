@@ -13,7 +13,8 @@
     "test:ci": "vitest run",
     "clean": "rm -rf .next .next-dev",
     "smoke": "node scripts/smoke.mjs",
-    "traffic:audit": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON scripts/traffic-audit.mjs"
+    "traffic:audit": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON scripts/traffic-audit.mjs",
+    "orders:sync": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON scripts/sync-orders.mjs"
   },
   "dependencies": {
     "@next/env": "15.5.27",
