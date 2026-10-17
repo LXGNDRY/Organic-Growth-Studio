@@ -8,7 +8,11 @@ The Studio finds legitimate organic discovery opportunities, analyzes public tar
 
 ## Scope boundaries
 
-Keep these integrations excluded: Shopify product intelligence, Google Search Console, GA4 and Shopify funnel reporting, Merchant Center feed or free-listing diagnostics, and Pinterest/TikTok publishing. Publishing stays manual. Follow each platform's current terms, rate limits, and authorization requirements before adding a connector.
+The owner changed scope on 2026-10-17: the Studio is now a Shopify-first organic growth engine for their own store, so Shopify product intelligence and Shopify session and funnel reporting are in scope, as are Merchant Center free-listing signals that arrive through Shopify's own session data. Shopify blog publishing through `articleCreate` and `articleUpdate` is permitted, and still requires owner review before anything is published.
+
+Keep these integrations excluded: Google Search Console, GA4, Merchant Center feed diagnostics, and Pinterest/TikTok publishing. Follow each platform's current terms, rate limits, and authorization requirements before adding a connector.
+
+Storefront sessions are not evidence until they are classified. A live shop records its own dev server, theme previews, paid clicks and ad-network placements in the same stream as organic discovery, so route every session through `src/lib/traffic-quality.ts` and let only `learnable` verdicts reach the adaptive model. On this shop that was 7.8% of 90-day sessions; the other 92.2% would have trained the model on the owner's own laptop and on purchased traffic.
 
 ## Application layout
 
