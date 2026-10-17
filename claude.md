@@ -21,7 +21,7 @@ Keep these integrations excluded: Shopify product intelligence, Google Search Co
 
 ## Local development
 
-Requires Node.js 20+ and pnpm 9.
+Requires Node.js 22 and pnpm 9. Node 20 reached end of life on 2026-04-30 and is no longer tested.
 
 ~~~bash
 pnpm install

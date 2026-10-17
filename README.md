@@ -6,7 +6,7 @@ The Studio is the repository's primary application. It analyzes public pages and
 
 ## Start locally
 
-Use Node.js 20 or newer and pnpm 9:
+Use Node.js 22 and pnpm 9 (the version in `.nvmrc`, and what CI runs):
 
 ~~~bash
 pnpm install
