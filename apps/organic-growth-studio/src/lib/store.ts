@@ -2,6 +2,7 @@ import {promises as fs} from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {mergeCatalog, type CatalogProduct} from '@/lib/catalog';
+import type {OrderAttribution} from '@/lib/attribution';
 
 export type Project={id:string;name:string;targetUrl:string;goal:string;ownershipAttestedAt:string|null;allowedClaims:string[];createdAt:string;updatedAt:string};
 export type StoredAnalysis={id:string;projectId:string;payload:unknown;createdAt:string};
@@ -12,11 +13,11 @@ export type Experiment={id:string;projectId:string;action:string;title:string;hy
 export type AgentRun={id:string;startedAt:string;finishedAt:string;projectsChecked:number;analysesSaved:number;experimentsCreated:number;draftsCreated:number;linksCreated:number;skipped:number;status:'complete'|'partial'|'failed';notes:string[]};
 export type AgentConfig={enabled:boolean;cadenceHours:number;nextRunAt:string|null;lastRunAt:string|null};
 type AgentEvent={id:string;projectId:string;signature:string;kind:string;title:string;createdAt:string};
-type State={projects:Project[];analyses:StoredAnalysis[];drafts:Draft[];links:TrackingLink[];events:EventRecord[];experiments:Experiment[];agentConfig:AgentConfig;agentEvents:AgentEvent[];agentRuns:AgentRun[];catalog:CatalogProduct[]};
+type State={projects:Project[];analyses:StoredAnalysis[];drafts:Draft[];links:TrackingLink[];events:EventRecord[];experiments:Experiment[];agentConfig:AgentConfig;agentEvents:AgentEvent[];agentRuns:AgentRun[];catalog:CatalogProduct[];attributions:OrderAttribution[]};
 const dataDir=process.env.DATA_DIR?path.resolve(process.env.DATA_DIR):path.join(process.cwd(),'data');
 const file=path.join(dataDir,'store.json');
 let pending=Promise.resolve();
-async function read():Promise<State>{try{const s=JSON.parse(await fs.readFile(file,'utf8')) as Partial<State>;return{projects:(s.projects??[]).map(p=>({...p,ownershipAttestedAt:p.ownershipAttestedAt??null,allowedClaims:Array.isArray(p.allowedClaims)?p.allowedClaims:[]})),analyses:s.analyses??[],drafts:s.drafts??[],links:s.links??[],events:s.events??[],experiments:s.experiments??[],agentConfig:s.agentConfig??{enabled:true,cadenceHours:6,nextRunAt:null,lastRunAt:null},agentEvents:s.agentEvents??[],agentRuns:s.agentRuns??[],catalog:s.catalog??[]}}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return{projects:[],analyses:[],drafts:[],links:[],events:[],experiments:[],agentConfig:{enabled:true,cadenceHours:6,nextRunAt:null,lastRunAt:null},agentEvents:[],agentRuns:[],catalog:[]};throw e}}
+async function read():Promise<State>{try{const s=JSON.parse(await fs.readFile(file,'utf8')) as Partial<State>;return{projects:(s.projects??[]).map(p=>({...p,ownershipAttestedAt:p.ownershipAttestedAt??null,allowedClaims:Array.isArray(p.allowedClaims)?p.allowedClaims:[]})),analyses:s.analyses??[],drafts:s.drafts??[],links:s.links??[],events:s.events??[],experiments:s.experiments??[],agentConfig:s.agentConfig??{enabled:true,cadenceHours:6,nextRunAt:null,lastRunAt:null},agentEvents:s.agentEvents??[],agentRuns:s.agentRuns??[],catalog:s.catalog??[],attributions:s.attributions??[]}}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return{projects:[],analyses:[],drafts:[],links:[],events:[],experiments:[],agentConfig:{enabled:true,cadenceHours:6,nextRunAt:null,lastRunAt:null},agentEvents:[],agentRuns:[],catalog:[],attributions:[]};throw e}}
 async function write(s:State){await fs.mkdir(path.dirname(file),{recursive:true,mode:0o700});const temp=file+'.'+randomUUID()+'.tmp';await fs.writeFile(temp,JSON.stringify(s,null,2),{encoding:'utf8',mode:0o600,flag:'wx'});await fs.rename(temp,file)}
 async function mutate<T>(fn:(s:State)=>T|Promise<T>):Promise<T>{let resolve!:()=>void;const previous=pending;pending=new Promise<void>(r=>resolve=r);await previous;try{const s=await read();const result=await fn(s);await write(s);return result}finally{resolve()}}
 export const store={
@@ -45,6 +46,13 @@ export const store={
  async agentEventExists(projectId:string,signature:string){return(await read()).agentEvents.some(x=>x.projectId===projectId&&x.signature===signature)},
  async addAgentEvent(v:Omit<AgentEvent,'id'|'createdAt'>){return mutate(s=>{const r={id:randomUUID(),...v,createdAt:new Date().toISOString()};s.agentEvents.push(r);return r})},
  async addAgentRun(v:Omit<AgentRun,'id'>){return mutate(s=>{const r={id:randomUUID(),...v};s.agentRuns.push(r);s.agentRuns=s.agentRuns.slice(-100);s.agentConfig.lastRunAt=r.finishedAt;return r})},
+ // Links across every project: attribution matches an order's UTM parameters
+ // against all of them, because an order knows nothing about project scoping.
+ async listAllLinks(){return [...(await read()).links]},
+ async listAttributions(){return [...(await read()).attributions]},
+ // Keyed on order name so re-running a sync over an overlapping window
+ // updates each order in place instead of double-counting its revenue.
+ async replaceAttributions(rows:OrderAttribution[]){return mutate(s=>{const byOrder=new Map(s.attributions.map(r=>[r.order,r]));for(const r of rows)byOrder.set(r.order,r);s.attributions=[...byOrder.values()].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));return s.attributions.length})},
  async listCatalog(){return [...(await read()).catalog]},
  async listPromotableCatalog(){return (await read()).catalog.filter(p=>p.promotable)},
  // An ingest replaces the catalog wholesale rather than appending: a product
