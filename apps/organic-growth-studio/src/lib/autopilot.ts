@@ -143,7 +143,10 @@ export async function runAutonomousCycle(){
  // all, records 'complete', and advances nextRunAt - hiding the failure from
  // anything watching status until someone reads the notes by hand.
  const status=runStatus(scanNotes.length,targetingFailed,totals.analysesSaved);
- await store.addAgentRun({startedAt,finishedAt,projectsChecked:projects.length,...totals,status,notes});
+ // Persisted, not just returned: the run history is where an owner looks to
+ // see what the engine did, and catalog targeting is invisible there unless
+ // the count is stored alongside the other per-cycle figures.
+ await store.addAgentRun({startedAt,finishedAt,projectsChecked:projects.length,targetsAdopted,...totals,status,notes});
  const latest=(await store.getAgentState()).config;
  await store.updateAgentConfig({nextRunAt:latest.enabled?new Date(Date.now()+(allowedCadences.includes(latest.cadenceHours)?latest.cadenceHours:6)*3600000).toISOString():null});
  return {startedAt,finishedAt,projectsChecked:projects.length,targetsAdopted,...totals,status,notes};
