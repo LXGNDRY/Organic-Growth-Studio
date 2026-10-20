@@ -66,10 +66,12 @@ export function planTargets(
  const notes:string[]=[];
  if(!catalog.length)return{selected:[],notes:['No catalog ingested, so no catalog targets were selected.']};
 
+ // The ceiling limits how many catalog projects may EXIST, so it gates
+ // creation only. Reusing a project that already exists adds nothing to the
+ // count, and refusing to reuse at the ceiling would stop the engine working
+ // its catalog at all - permanently, and while still reporting a complete
+ // cycle, because the scan only covers products this planner selects.
  const catalogProjects=projects.filter(p=>typeof p.sourceHandle==='string'&&p.sourceHandle);
- if(catalogProjects.length>=limits.maxProjects){
-  return{selected:[],notes:[`Catalog projects are at the ${limits.maxProjects} ceiling; no new targets were taken.`]};
- }
 
  const byHandle=new Map(catalogProjects.map(p=>[p.sourceHandle as string,p]));
  // A URL the owner already tracks by hand is theirs. Selecting it would create
@@ -79,11 +81,10 @@ export function planTargets(
  const cooldownMs=limits.cooldownDays*86400000;
  const ranked=scoreCatalog(catalog,attributions);
  const selected:Selection[]=[];
- let onCooldown=0,alreadyManual=0;
+ let onCooldown=0,alreadyManual=0,blockedByCeiling=0,created=0;
 
  for(const product of ranked){
   if(selected.length>=limits.perCycle)break;
-  if(catalogProjects.length+selected.filter(s=>!s.projectId).length>=limits.maxProjects)break;
   if(product.url&&manualUrls.has(product.url)){alreadyManual++;continue;}
 
   const existing=byHandle.get(product.handle);
@@ -95,12 +96,32 @@ export function planTargets(
    selected.push({product,projectId:existing.id});
    continue;
   }
+  // Only a new project counts against the ceiling, and hitting it skips this
+  // product rather than ending the scan: a lower-ranked product that already
+  // has a project is still free to work.
+  if(catalogProjects.length+created>=limits.maxProjects){blockedByCeiling++;continue;}
   selected.push({product,projectId:null});
+  created++;
  }
 
  if(selected.length)notes.push(`Selected ${selected.length} catalog target${selected.length===1?'':'s'} from ${ranked.length} promotable.`);
  else notes.push(`No catalog target was eligible from ${ranked.length} promotable.`);
  if(onCooldown)notes.push(`${onCooldown} skipped inside the ${limits.cooldownDays}-day cooldown.`);
  if(alreadyManual)notes.push(`${alreadyManual} skipped because a hand-made project already tracks that page.`);
+ if(blockedByCeiling)notes.push(`${blockedByCeiling} not created: catalog projects are at the ${limits.maxProjects} ceiling.`);
  return{selected,notes};
+}
+
+export type RunStatus='complete'|'partial'|'failed';
+
+/**
+ * A cycle's status. "Nothing was due" is routine, so an ordinary targeting
+ * note must not downgrade the run - but a targeting EXCEPTION must. Without
+ * that distinction a cycle where targeting threw and there are no hand-made
+ * projects does no work at all, records 'complete', advances nextRunAt, and
+ * hides the failure from anything watching status.
+ */
+export function runStatus(scanNoteCount:number,targetingFailed:boolean,analysesSaved:number):RunStatus{
+ if(scanNoteCount===0&&!targetingFailed)return 'complete';
+ return analysesSaved>0?'partial':'failed';
 }

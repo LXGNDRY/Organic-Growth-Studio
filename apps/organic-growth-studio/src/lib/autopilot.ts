@@ -4,7 +4,7 @@ import {rankActions} from '@/lib/adaptive';
 import {mapConcurrent} from '@/lib/concurrency';
 import {store} from '@/lib/store';
 import {ALLOWED_CADENCES as allowedCadences} from '@/lib/agent-settings';
-import {limitsFromEnv,planTargets} from '@/lib/targeting';
+import {limitsFromEnv,planTargets,runStatus} from '@/lib/targeting';
 
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0,24);
 const DEFAULT_SCAN_CONCURRENCY=3;
@@ -28,18 +28,31 @@ export async function runAutonomousCycle(){
  const targetingNotes:string[]=[];
  const dueCatalogProjects=new Set<string>();
  let targetsAdopted=0;
+ let targetingFailed=false;
  try{
   const [catalog,attributions,existing]=await Promise.all([store.listCatalog(),store.listAttributions(),store.listProjects()]);
+  const existingById=new Map(existing.map(p=>[p.id,p]));
   const plan=planTargets(catalog,attributions,existing,Date.now(),limitsFromEnv());
   targetingNotes.push(...plan.notes);
   for(const {product,projectId} of plan.selected){
    if(!product.url)continue;
-   const id=projectId??(await store.createProject({
-    name:product.title||product.handle,
-    targetUrl:product.url,
-    goal:'qualified_visits',
-    sourceHandle:product.handle,
-   })).id;
+   let id=projectId;
+   if(id){
+    // The handle is stable but the URL it resolves to is not: a product that
+    // was unlisted and relisted, or a shop that changes its primary domain,
+    // leaves the stored project pointing at a page that no longer serves.
+    // Without this the autopilot would re-analyse that dead URL every
+    // cooldown, indefinitely.
+    const current=existingById.get(id);
+    if(current&&current.targetUrl!==product.url)await store.updateProject(id,{targetUrl:product.url});
+   }else{
+    id=(await store.createProject({
+     name:product.title||product.handle,
+     targetUrl:product.url,
+     goal:'qualified_visits',
+     sourceHandle:product.handle,
+    })).id;
+   }
    await store.markTargeted(id);
    dueCatalogProjects.add(id);
    targetsAdopted++;
@@ -47,6 +60,7 @@ export async function runAutonomousCycle(){
  }catch(error){
   // Targeting must never take the whole cycle down: the scan of existing
   // projects is the part the owner already depends on.
+  targetingFailed=true;
   targetingNotes.push(`Catalog targeting failed: ${error instanceof Error?error.message:'unexpected failure'}`);
  }
 
@@ -123,9 +137,12 @@ export async function runAutonomousCycle(){
  const scanNotes=result.flatMap(item=>item.note?[item.note]:[]);
  const notes=[...targetingNotes,...scanNotes];
  const finishedAt=new Date().toISOString();
- // Targeting notes are routine reporting, not failures, so only a scan note
- // may downgrade the run's status.
- const status=scanNotes.length?(totals.analysesSaved?'partial':'failed'):'complete';
+ // "Nothing was due" is routine reporting, so an ordinary targeting note must
+ // not downgrade the run. A targeting EXCEPTION must: without this, a cycle
+ // where targeting threw and there are no hand-made projects does no work at
+ // all, records 'complete', and advances nextRunAt - hiding the failure from
+ // anything watching status until someone reads the notes by hand.
+ const status=runStatus(scanNotes.length,targetingFailed,totals.analysesSaved);
  await store.addAgentRun({startedAt,finishedAt,projectsChecked:projects.length,...totals,status,notes});
  const latest=(await store.getAgentState()).config;
  await store.updateAgentConfig({nextRunAt:latest.enabled?new Date(Date.now()+(allowedCadences.includes(latest.cadenceHours)?latest.cadenceHours:6)*3600000).toISOString():null});

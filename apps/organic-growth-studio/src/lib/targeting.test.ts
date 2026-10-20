@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { DEFAULT_LIMITS, limitsFromEnv, planTargets, type ProjectLike } from './targeting';
+import { DEFAULT_LIMITS, limitsFromEnv, planTargets, runStatus, type ProjectLike } from './targeting';
 import type { CatalogProduct } from './catalog';
 import type { OrderAttribution } from './attribution';
 
@@ -91,6 +91,30 @@ describe('planTargets', () => {
     expect(plan.notes.some(n => n.includes('ceiling'))).toBe(true);
   });
 
+  it('keeps working due projects after the ceiling is reached', () => {
+    // The ceiling limits how many catalog projects may EXIST, so it must gate
+    // creation only. Refusing to reuse at the ceiling stopped the engine
+    // working its catalog at all - permanently, and while still reporting a
+    // complete cycle, because the scan only covers what this planner selects.
+    const atCeiling = five.map(p => catalogProject(p.handle, null));
+    const plan = planTargets(five, [], atCeiling, NOW, {perCycle: 3, cooldownDays: 14, maxProjects: 5});
+    expect(plan.selected).toHaveLength(3);
+    expect(plan.selected.every(s => s.projectId !== null)).toBe(true);
+  });
+
+  it('skips an uncreatable product without abandoning lower-ranked reusable ones', () => {
+    // 'top' outranks the rest and has no project, so at the ceiling it cannot
+    // be created - but that must not end the scan for products that already
+    // have one and cost nothing to work.
+    const existing = [catalogProject('b', null), catalogProject('c', null)];
+    const plan = planTargets(
+      [product('top', {price: 70}), product('b'), product('c')],
+      [], existing, NOW, {perCycle: 3, cooldownDays: 14, maxProjects: 2},
+    );
+    expect(plan.selected.map(s => s.product.handle).sort()).toEqual(['b', 'c']);
+    expect(plan.notes.some(n => n.includes('ceiling'))).toBe(true);
+  });
+
   it('stops creating the moment the ceiling would be crossed mid-cycle', () => {
     // One catalog project exists and the ceiling is three, so exactly two may
     // be created - not the three perCycle would otherwise allow.
@@ -143,5 +167,26 @@ describe('limitsFromEnv', () => {
       process.env.AUTOPILOT_TARGETS_PER_CYCLE = bad;
       expect(limitsFromEnv().perCycle, bad).toBe(DEFAULT_LIMITS.perCycle);
     }
+  });
+});
+
+describe('runStatus', () => {
+  it('is complete when nothing went wrong', () => {
+    expect(runStatus(0, false, 3)).toBe('complete');
+    // No work to do is not a failure: every product may simply be on cooldown.
+    expect(runStatus(0, false, 0)).toBe('complete');
+  });
+
+  it('never reports complete when targeting threw', () => {
+    // The case that matters: targeting fails, there are no hand-made projects,
+    // so the cycle does no work at all. Reporting 'complete' there advances
+    // nextRunAt and hides the failure from anything watching status.
+    expect(runStatus(0, true, 0)).toBe('failed');
+    expect(runStatus(0, true, 2)).toBe('partial');
+  });
+
+  it('still downgrades on scan errors alone', () => {
+    expect(runStatus(1, false, 0)).toBe('failed');
+    expect(runStatus(1, false, 5)).toBe('partial');
   });
 });
