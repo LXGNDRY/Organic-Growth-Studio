@@ -27,7 +27,10 @@ export async function runAutonomousCycle(){
  // turns the plan into projects.
  const targetingNotes:string[]=[];
  const dueCatalogProjects=new Set<string>();
- let targetsAdopted=0;
+ // Counts every catalog target the cycle worked, new or revisited - not only
+ // newly created ones. After the first week every cycle is revisits, so a
+ // "newly adopted" count would read 0 forever and say nothing useful.
+ let targetsWorked=0;
  let targetingFailed=false;
  try{
   const [catalog,attributions,existing]=await Promise.all([store.listCatalog(),store.listAttributions(),store.listProjects()]);
@@ -55,7 +58,7 @@ export async function runAutonomousCycle(){
    }
    await store.markTargeted(id);
    dueCatalogProjects.add(id);
-   targetsAdopted++;
+   targetsWorked++;
   }
  }catch(error){
   // Targeting must never take the whole cycle down: the scan of existing
@@ -143,10 +146,13 @@ export async function runAutonomousCycle(){
  // all, records 'complete', and advances nextRunAt - hiding the failure from
  // anything watching status until someone reads the notes by hand.
  const status=runStatus(scanNotes.length,targetingFailed,totals.analysesSaved);
- await store.addAgentRun({startedAt,finishedAt,projectsChecked:projects.length,...totals,status,notes});
+ // Persisted, not just returned: the run history is where an owner looks to
+ // see what the engine did, and catalog targeting is invisible there unless
+ // the count is stored alongside the other per-cycle figures.
+ await store.addAgentRun({startedAt,finishedAt,projectsChecked:projects.length,targetsWorked,...totals,status,notes});
  const latest=(await store.getAgentState()).config;
  await store.updateAgentConfig({nextRunAt:latest.enabled?new Date(Date.now()+(allowedCadences.includes(latest.cadenceHours)?latest.cadenceHours:6)*3600000).toISOString():null});
- return {startedAt,finishedAt,projectsChecked:projects.length,targetsAdopted,...totals,status,notes};
+ return {startedAt,finishedAt,projectsChecked:projects.length,targetsWorked,...totals,status,notes};
 }
 
 export {validCadence} from '@/lib/agent-settings';
