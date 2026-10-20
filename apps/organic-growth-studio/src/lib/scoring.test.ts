@@ -91,6 +91,21 @@ describe('scoreCatalog', () => {
     expect(proven('none')).toBe(0);
   });
 
+  it('scales proven against the best targetable earner, not the best overall', () => {
+    // A product that earned well and was later unlisted stays in attribution
+    // history but can never be selected. Letting it set the ceiling divides
+    // every live product's proven score by a number none can reach.
+    const scored = scoreCatalog(
+      [product({handle: 'live'}), product({handle: 'retired', promotable: false, reason: 'unlisted'})],
+      [
+        order({order: 'A', amount: 1000, productHandles: ['retired']}),
+        order({order: 'B', amount: 100, productHandles: ['live']}),
+      ],
+    );
+    expect(scored).toHaveLength(1);
+    expect(scored[0].factors.find(f => f.name === 'proven')!.value).toBe(1);
+  });
+
   it('prices relative to the catalog, not an absolute scale', () => {
     // A $70 item is this shop's top end even though it is not expensive.
     const scored = scoreCatalog(

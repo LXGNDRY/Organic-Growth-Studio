@@ -68,7 +68,14 @@ export function scoreCatalog(products:CatalogProduct[],attributions:OrderAttribu
  const minPrice=prices.length?Math.min(...prices):0;
  const maxPrice=prices.length?Math.max(...prices):0;
  const priceSpread=maxPrice-minPrice;
- const topRevenue=Math.max(0,...[...revenue.values()]);
+ // Scaled against the best TARGETABLE earner, not the best earner overall.
+ // A product that earned well and has since been unlisted or drafted is still
+ // in the attribution history but can never be selected, so letting it set the
+ // ceiling would divide every live product's proven score by a number none of
+ // them can reach. This shop keeps 31 unlisted and 15 draft products and one
+ // non-targetable handle has already earned $170, so the path is live even
+ // though that handle is not currently the top earner.
+ const topRevenue=Math.max(0,...targets.map(p=>revenue.get(p.handle)||0));
 
  return targets.map(product=>{
   const reasons:string[]=[];
