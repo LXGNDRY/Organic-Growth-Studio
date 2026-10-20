@@ -4,6 +4,7 @@ import {rankActions} from '@/lib/adaptive';
 import {mapConcurrent} from '@/lib/concurrency';
 import {store} from '@/lib/store';
 import {ALLOWED_CADENCES as allowedCadences} from '@/lib/agent-settings';
+import {limitsFromEnv,planTargets,runStatus} from '@/lib/targeting';
 
 const digest=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0,24);
 const DEFAULT_SCAN_CONCURRENCY=3;
@@ -20,7 +21,59 @@ export async function runAutonomousCycle(){
  const {config}=await store.getAgentState();
  if(!config.enabled)return {skipped:true,reason:'Autopilot is paused.'};
 
- const projects=await store.listProjects();
+ // Take on a bounded set of catalog products before the scan, so the engine
+ // chooses its own targets instead of only working what the owner typed in.
+ // Everything about how many and how often lives in targeting.ts; this just
+ // turns the plan into projects.
+ const targetingNotes:string[]=[];
+ const dueCatalogProjects=new Set<string>();
+ let targetsAdopted=0;
+ let targetingFailed=false;
+ try{
+  const [catalog,attributions,existing]=await Promise.all([store.listCatalog(),store.listAttributions(),store.listProjects()]);
+  const existingById=new Map(existing.map(p=>[p.id,p]));
+  const plan=planTargets(catalog,attributions,existing,Date.now(),limitsFromEnv());
+  targetingNotes.push(...plan.notes);
+  for(const {product,projectId} of plan.selected){
+   if(!product.url)continue;
+   let id=projectId;
+   if(id){
+    // The handle is stable but the URL it resolves to is not: a product that
+    // was unlisted and relisted, or a shop that changes its primary domain,
+    // leaves the stored project pointing at a page that no longer serves.
+    // Without this the autopilot would re-analyse that dead URL every
+    // cooldown, indefinitely.
+    const current=existingById.get(id);
+    if(current&&current.targetUrl!==product.url)await store.updateProject(id,{targetUrl:product.url});
+   }else{
+    id=(await store.createProject({
+     name:product.title||product.handle,
+     targetUrl:product.url,
+     goal:'qualified_visits',
+     sourceHandle:product.handle,
+    })).id;
+   }
+   await store.markTargeted(id);
+   dueCatalogProjects.add(id);
+   targetsAdopted++;
+  }
+ }catch(error){
+  // Targeting must never take the whole cycle down: the scan of existing
+  // projects is the part the owner already depends on.
+  targetingFailed=true;
+  targetingNotes.push(`Catalog targeting failed: ${error instanceof Error?error.message:'unexpected failure'}`);
+ }
+
+ // A catalog project is scanned only on the cycles its product is actually
+ // due. Without this the cooldown would bound adoption but not work: every
+ // product ever adopted would be refetched every cycle forever, so after a
+ // week of onboarding the engine would be scanning all 80 of the shop's
+ // promotable pages four times a day in perpetuity. Projects the owner made
+ // by hand keep their existing behaviour and run every cycle.
+ const allProjects=await store.listProjects();
+ const projects=allProjects.filter(p=>!p.sourceHandle||dueCatalogProjects.has(p.id));
+ const deferred=allProjects.length-projects.length;
+ if(deferred)targetingNotes.push(`${deferred} catalog project${deferred===1?'':'s'} not due this cycle.`);
  const analysisJobs=new Map<string,Promise<Analysis>>();
  const result=await mapConcurrent(projects,scanConcurrency(),async(row)=>{
   try{
@@ -81,13 +134,19 @@ export async function runAutonomousCycle(){
   linksCreated:sum.linksCreated+item.linksCreated,
   skipped:sum.skipped+item.skipped,
  }),{analysesSaved:0,experimentsCreated:0,draftsCreated:0,linksCreated:0,skipped:0});
- const notes=result.flatMap(item=>item.note?[item.note]:[]);
+ const scanNotes=result.flatMap(item=>item.note?[item.note]:[]);
+ const notes=[...targetingNotes,...scanNotes];
  const finishedAt=new Date().toISOString();
- const status=notes.length?(totals.analysesSaved?'partial':'failed'):'complete';
+ // "Nothing was due" is routine reporting, so an ordinary targeting note must
+ // not downgrade the run. A targeting EXCEPTION must: without this, a cycle
+ // where targeting threw and there are no hand-made projects does no work at
+ // all, records 'complete', and advances nextRunAt - hiding the failure from
+ // anything watching status until someone reads the notes by hand.
+ const status=runStatus(scanNotes.length,targetingFailed,totals.analysesSaved);
  await store.addAgentRun({startedAt,finishedAt,projectsChecked:projects.length,...totals,status,notes});
  const latest=(await store.getAgentState()).config;
  await store.updateAgentConfig({nextRunAt:latest.enabled?new Date(Date.now()+(allowedCadences.includes(latest.cadenceHours)?latest.cadenceHours:6)*3600000).toISOString():null});
- return {startedAt,finishedAt,projectsChecked:projects.length,...totals,status,notes};
+ return {startedAt,finishedAt,projectsChecked:projects.length,targetsAdopted,...totals,status,notes};
 }
 
 export {validCadence} from '@/lib/agent-settings';
